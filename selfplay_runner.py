@@ -21,6 +21,7 @@ class ShareRunner:
         self.all_args = config['all_args']
         self.envs = config['envs']
         self.eval_envs = config['eval_envs']
+        self.test_envs = config['test_envs']
         self.device = config['device']
 
         # parameters
@@ -28,11 +29,13 @@ class ShareRunner:
         self.num_env_steps = int(self.all_args.num_env_steps)
         self.n_rollout_threads = self.all_args.n_rollout
         self.n_eval_rollout_threads = self.all_args.n_eval_rollout
+        self.n_test_rollout_threads = self.all_args.n_test_rollout
         self.buffer_size = self.all_args.buffer_size
 
         # interval
         self.save_interval = self.all_args.save_interval
         self.log_interval = self.all_args.log_interval
+        self.test_interval = self.all_args.test_interval
 
         # eval
         self.use_eval = self.all_args.use_eval
@@ -141,18 +144,18 @@ class ShareRunner:
             train_infos = self.train()
             # self.render()
             # post process
-            self.total_num_steps = self.buffer_size * self.n_rollout_threads
+            self.total_num_steps =episode* self.buffer_size * self.n_rollout_threads
 
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
                 logging.info(
                     "\n updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                    .format(episode,
-                            episodes,
-                            self.total_num_steps,
-                            self.num_env_steps,
-                            int(self.total_num_steps / (end - start))))
+                        .format(episode,
+                                episodes,
+                                self.total_num_steps,
+                                self.num_env_steps,
+                                int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
                 train_infos["average_episode_rewards"] = self.buffer.rewards.sum() / (
                         (self.buffer.masks == False).sum() + 1)
@@ -161,6 +164,9 @@ class ShareRunner:
 
             if episode % self.eval_interval == 0 and episode != 0 and self.use_eval:
                 self.eval(self.total_num_steps)
+
+            if episode % self.test_interval == 0 and episode != 0:
+                self.test(self.total_num_steps)
 
             # save model
             if (episode % self.save_interval == 0) or (episode == episodes - 1):
@@ -342,20 +348,20 @@ class ShareRunner:
         # Update elo
         ego_elo = np.array([self.latest_elo for _ in range(self.n_eval_rollout_threads)])
         opponent_elo = np.array([self.policy_pool[key] for key in eval_choose_opponents])
-        expected_score = 1 / (1 + 10 ** ((opponent_elo - ego_elo) / 400))
+        expected_score = 1 / (1 + 10 ** ((ego_elo - opponent_elo) / 400))
 
         actual_score = np.zeros_like(expected_score)
         diff = opponent_average_episode_rewards - eval_average_episode_rewards
-        actual_score[diff > 1] = 1  # win
-        actual_score[abs(diff) < 1] = 0.5  # tie
-        actual_score[diff < -1] = 0  # lose
-        logging.info(f' win rate is {np.mean(actual_score == 0)},tie rate is {np.mean(actual_score == 0.5)}')
+        actual_score[diff > 2] = 1  # win
+        actual_score[abs(diff) < 2] = 0.5  # tie
+        actual_score[diff < -2] = 0  # lose
         elo_gain = 32 * (actual_score - expected_score)
         update_opponent_elo = opponent_elo + elo_gain
         for i, key in enumerate(eval_choose_opponents):
             self.policy_pool[key] = update_opponent_elo[i]
         ego_elo = ego_elo - elo_gain
         self.latest_elo = ego_elo.mean()
+        self.policy_pool['latest'] = self.latest_elo
 
         eval_infos = {}
         eval_infos['eval_average_episode_rewards'] = eval_average_episode_rewards.mean()
@@ -369,6 +375,32 @@ class ShareRunner:
             file.write(json.dumps(self.policy_pool))
             file.close()
         self.reset_opponent()
+
+    def test(self, total_num_steps):
+        logging.info("\nStart test...")
+        self.policy.prep_rollout()
+        obs, _ = self.test_envs.reset()
+        masks = np.ones((self.n_test_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
+        rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
+                              dtype=np.float32)
+        step = 0
+        rewards = np.zeros([self.n_test_rollout_threads, 1])
+        while step < 3001:
+            actions, rnn_states = self.policy.act(np.concatenate(obs),
+                                                  np.concatenate(rnn_states),
+                                                  np.concatenate(masks), deterministic=True)
+            actions = np.array(np.split(_t2n(actions), self.n_test_rollout_threads))
+            rnn_states = np.array(np.split(_t2n(rnn_states), self.n_test_rollout_threads))
+            obs, _, eval_rewards, _, eval_infos = self.test_envs.step(actions)
+
+            rewards = rewards + eval_rewards.sum(axis=-1, keepdims=True)
+            step += 1
+        test_infos = {}
+        for i in range(self.n_test_rollout_threads):
+            test_infos[f'reward_{i + 1}'] = rewards[i]
+        test_infos['reward_mean'] = rewards.mean()
+        logging.info(f'test reward is {rewards}\n')
+        self.log_info(test_infos, total_num_steps, 'test')
 
     def save(self, episode):
         policy_actor_state_dict = self.policy.actor.state_dict()

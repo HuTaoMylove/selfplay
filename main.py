@@ -2,7 +2,7 @@ from arguments import get_args
 from selfplay_runner import ShareRunner
 import gfootball.env as football_env
 # from utils import *
-from multiagent_setup import get_env, get_eval_env
+from multiagent_setup import get_env, get_eval_env,get_test_env
 import os
 import traceback
 import torch
@@ -22,7 +22,7 @@ if __name__ == '__main__':
 
     envs = get_env(all_args)
     eval_envs = get_eval_env(all_args) if all_args.use_eval else None
-    test_envs = get_test_env(all_args)
+    test_envs = get_test_env()
 
     run_dir = Path("./results") \
               / all_args.env_name
@@ -48,6 +48,7 @@ if __name__ == '__main__':
         "all_args": all_args,
         "envs": envs,
         'eval_envs': eval_envs,
+        'test_envs': test_envs,
         "device": device,
         "run_dir": run_dir,
         "log_dir": log_dir
