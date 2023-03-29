@@ -1,0 +1,16 @@
+ 
+# 忽略当前文件夹下的picture_1.txt
+/img.jpg
+ 
+# 忽略当前文件夹下的js文件夹
+#/scripts/results
+ 
+# 忽略当前目录中所有名为ok.jpg的文件
+*.jpg
+ 
+# 忽略当前目录中所有扩展名为.mp4的文件
+*.mp4
+*.idea
+
+*.pt
+!*latest.pt

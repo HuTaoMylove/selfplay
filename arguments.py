@@ -3,45 +3,87 @@ import argparse
 
 def get_args():
     parse = argparse.ArgumentParser()
-    parse.add_argument('--n_rollout', type=int, default=2, help='the number of para env')
-    parse.add_argument('--gamma', type=float, default=0.993, help='the discount factor of RL')
+
+    """
+    env para
+    """
+    parse.add_argument('--env_name', type=str, default='5_vs_5')
+    parse.add_argument('--num_env_steps', type=int, default=1e9, help='the steps to collect samples')
+    parse.add_argument('--cuda', action='store_true', default=True, help='use cuda do the training')
+    parse.add_argument('--num_agent', type=int, default=8)
+    parse.add_argument('--left_agent', type=int, default=4)
+    parse.add_argument('--right_agent', type=int, default=4)
+    parse.add_argument('--rewards', type=str, default='scoring,checkpoints')
     parse.add_argument('--render', type=bool, default=False, help='show nr not')
-    parse.add_argument('--seed', type=int, default=123, help='the random seeds')
-    parse.add_argument('--n_training', type=int, default=2, help='the number of workers to collect samples')
-    parse.add_argument('--env_name', type=str, default='11_vs_11_easy_stochastic')
-    parse.add_argument('--batch_size', type=int, default=64, help='the batch size of updating')
+
+    """
+    selfplay para
+    """
+
+    parse.add_argument("--selfplay-algorithm", type=str, default='sp', choices=["sp", "fsp", "pfsp"],
+                       help="Specifiy the selfplay algorithm (default 'sp')")
+    parse.add_argument('--n-choose-opponents', type=int, default=1,
+                       help="number of different opponents chosen for rollout. (default 1)")
+    parse.add_argument('--init-elo', type=float, default=1000.0,
+                       help="initial ELO for policy performance. (default 1000.0)")
+
+    """
+    networt para
+    """
+
+    parse.add_argument("--act-hidden-size", type=str, default='256 256',
+                       help="Dimension of hidden layers for actlayer (default '256 256')")
+    parse.add_argument("--activation-id", type=int, default=1,
+                       help="Choose 0 to use Tanh, 1 to use ReLU, 2 to use LeakyReLU, 3 to use ELU (default 1)")
+    parse.add_argument("--gain", type=float, default=0.01,
+                       help="The gain # of last action layer")
+    parse.add_argument("--recurrent-hidden-size", type=int, default=256,
+                       help="Dimension of hidden layers for recurrent layers (default 128)")
+    parse.add_argument("--recurrent-hidden-layers", type=int, default=1,
+                       help="The number of recurrent layers (default 1)")
+
+    """
+    train para
+    """
+    parse.add_argument('--n-rollout', type=int, default=6, help='the number of para env')
+    parse.add_argument("--buffer-size", type=int, default=3000,
+                       help="maximum storage in the buffer.")
+    parse.add_argument("--data-chunk-length", type=int, default=16,
+                       help="Time length of chunks used to train a recurrent_policy (default 16)")
+    parse.add_argument("--num-mini-batch", type=int, default=5,
+                       help='number of batches for ppo (default: 1)')
+    parse.add_argument("--gamma", type=float, default=0.99,
+                       help='discount factor for rewards (default: 0.99)')
+    parse.add_argument("--ppo-epoch", type=int, default=4,
+                       help='number of ppo epochs (default: 10)')
     parse.add_argument('--lr', type=float, default=0.001, help='learning rate of the algorithm')
-    parse.add_argument('--dropout', type=float, default=0.3)
-    parse.add_argument('--epochs', type=int, default=2, help='the epoch during training')
-    parse.add_argument('--nsteps', type=int, default=128, help='the steps to collect samples')
-    parse.add_argument('--vloss-coef', type=float, default=0.5, help='the coefficient of value loss')
-    parse.add_argument('--ent-coef', type=float, default=0.01, help='the entropy loss coefficient')
-    parse.add_argument('--tau', type=float, default=0.95, help='gae coefficient')
-    parse.add_argument('--cuda', action='store_true', help='use cuda do the training')
-    parse.add_argument('--total-frames', type=int, default=int(1e5), help='the total frames for training')
-    parse.add_argument('--eps', type=float, default=1e-5, help='param for adam optimizer')
-    parse.add_argument('--clip', type=float, default=0.27, help='the ratio clip param')
-    parse.add_argument('--save-dir', type=str, default='saved_models/', help='the folder to save models')
-    parse.add_argument('--lr-decay', action='store_true', help='if using the learning rate decay during decay')
-    parse.add_argument('--max-grad-norm', type=float, default=0.5, help='grad norm')
-    parse.add_argument('--display-interval', type=int, default=10, help='the interval that display log information')
-    parse.add_argument('--log-dir', type=str, default='logs/')
-    parse.add_argument('--policy_model_dir', type=str, default='policy_model')
-    parse.add_argument('--numIters', type=int, default=1)
-    parse.add_argument('--numEps', type=int, default=1)
-    parse.add_argument('--tempThreshold', type=int, default=15)
-    parse.add_argument('--updateThreshold', type=float, default=0.6)
-    parse.add_argument('--maxlenOfQueue', type=int, default=200000)
-    parse.add_argument('--numMCTSSims', type=int, default=25)
-    parse.add_argument('--gfootballCompare', type=int, default=1)
-    parse.add_argument('--cpuct', type=int, default=1)
-    parse.add_argument('--checkpoint', type=str, default='./temp/')
-    parse.add_argument('--load_model', type=bool, default=False)
-    parse.add_argument('--numItersForTrainExamplesHistory', type=str, default=10)
-    parse.add_argument('--num_agent', type=int, default=4)
-    parse.add_argument('--left_agent', type=int, default=2)
-    parse.add_argument('--right_agent', type=int, default=2)
-    parse.add_argument('--num_channels', type=int, default=512)
+
+    parse.add_argument("--use-gae", action='store_false', default=True,
+                       help='Whether to use generalized advantage estimation')
+    parse.add_argument("--gae-lambda", type=float, default=0.95,
+                       help='gae lambda parameter (default: 0.95)')
+    parse.add_argument("--clip-param", type=float, default=0.2,
+                       help='ppo clip parameter (default: 0.2)')
+    parse.add_argument("--use-clipped-value-loss", action='store_true', default=False,
+                       help="By default false. If set, clip value loss.")
+    parse.add_argument("--value-loss-coef", type=float, default=1,
+                       help='ppo value loss coefficient (default: 1)')
+    parse.add_argument("--entropy-coef", type=float, default=0.01,
+                       help='entropy term coefficient (default: 0.01)')
+    parse.add_argument("--use-max-grad-norm", action='store_false', default=True,
+                       help="By default, use max norm of gradients. If set, do not use.")
+    parse.add_argument("--max-grad-norm", type=float, default=2,
+                       help='max norm of gradients (default: 2)')
+
+    """
+    interval para
+    """
+
+    parse.add_argument('--save-interval', type=int, default=5, help='the number of save')
+    parse.add_argument('--log-interval', type=int, default=1, help='the number of log')
+
+    parse.add_argument('--seed', type=int, default=123, help='the random seeds')
+    parse.add_argument('--n_training', type=int, default=4, help='the number of workers to collect samples')
 
     # args = parse.parse_args()
     args, unknown = parse.parse_known_args()

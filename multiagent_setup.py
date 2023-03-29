@@ -12,50 +12,71 @@ import ray
 from ray import tune
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.tune.registry import register_env
-from env_wrappers import SubprocVecEnv, DummyVecEnv
+from env_wrappers import ShareSubprocVecEnv
 import numpy as np
 from arguments import get_args
-
-parser = argparse.ArgumentParser()
-
-parser.add_argument('--num-agents', type=int, default=3)
-parser.add_argument('--num-policies', type=int, default=3)
-parser.add_argument('--num-iters', type=int, default=100000)
-parser.add_argument('--simple', action='store_true')
-
-
-# class RllibGFootball(MultiAgentEnv):
-
 
 class FootballEnv:
     """An example of a wrapper for GFootball to make it compatible with rllib."""
 
     def create_single_football_env(self, args):
+        assert args.num_agent == args.left_agent + args.right_agent
         env = football_env.create_environment(
-            env_name=args.env_name, stacked=True,
+            env_name=args.env_name,
+            stacked=False,
             logdir='/tmp/rllib_test',
-            write_goal_dumps=False, write_full_episode_dumps=False, render=args.render,
+            rewards=args.rewards,
+            write_goal_dumps=False, write_full_episode_dumps=False,
+            render=args.render,
             dump_frequency=0,
             number_of_left_players_agent_controls=args.left_agent,
             number_of_right_players_agent_controls=args.right_agent,
             channel_dimensions=(42, 42))
         return env
 
+    def n_agents(self):
+        return self.num_agents
+
     def __init__(self, args):
         self.env = self.create_single_football_env(args)
         self.action_space = gym.spaces.Discrete(self.env.action_space.nvec[1])
+        self.num_agents = args.num_agent
         self.observation_space = gym.spaces.Box(
             low=self.env.observation_space.low[0],
             high=self.env.observation_space.high[0],
             dtype=self.env.observation_space.dtype)
-        self.num_agents = args.num_agent
+        share_obs_shape = np.array(self.observation_space.shape)
+        share_obs_shape[-1] = share_obs_shape[-1] + self.num_agents // 2 - 1
+        self.share_observation_space = gym.spaces.Box(
+            low=np.zeros(share_obs_shape),
+            high=np.ones(share_obs_shape)*255,
+            dtype=self.env.observation_space.dtype)
 
     def reset(self):
-        return self.env.reset()
+        o = self.env.reset()
+        half = int(self.num_agents // 2)
+        left_half = np.concatenate([o[0], np.concatenate(np.expand_dims(o[1:half, ..., -1], -1), -1)], axis=-1)
+        left_half = np.expand_dims(left_half, axis=0)
+        left_half = np.concatenate([left_half] * half, axis=0)
+        right_half = np.concatenate([o[half], np.concatenate(np.expand_dims(o[half + 1:half * 2, ..., -1], -1), -1)],
+                                    axis=-1)
+        right_half = np.expand_dims(right_half, axis=0)
+        right_half = np.concatenate([right_half] * half, axis=0)
+        share_o = np.concatenate([left_half, right_half], axis=0)
+        return o, share_o
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
         o, r, d, i = self.env.step(action.reshape(self.num_agents, ))
-        return o, r, d, i
+        half = int(self.num_agents // 2)
+        left_half = np.concatenate([o[0], np.concatenate(np.expand_dims(o[1:half, ..., -1], -1), -1)], axis=-1)
+        left_half = np.expand_dims(left_half, axis=0)
+        left_half = np.concatenate([left_half] * half, axis=0)
+        right_half = np.concatenate([o[half], np.concatenate(np.expand_dims(o[half + 1:half * 2, ..., -1], -1), -1)],
+                                    axis=-1)
+        right_half = np.expand_dims(right_half, axis=0)
+        right_half = np.concatenate([right_half] * half, axis=0)
+        share_o = np.concatenate([left_half, right_half], axis=0)
+        return o, share_o, r, d, i
 
     def close(self):
         self.env.close()
@@ -73,31 +94,4 @@ def get_env(args):
 
         return init_env
 
-    return SubprocVecEnv([get_env_fn(i) for i in range(args.n_rollout)])
-
-
-if __name__ == '__main__':
-    args = get_args()
-    # env = FootballEnv(args)
-    env = get_env(args)
-    # env = create_single_football_env(args)
-
-    obs = env.reset()
-    for _ in range(int(1e3)):
-        flag = 0
-        action = np.random.randint(0, env.action_space.n, 8).reshape(2, 4)
-        # action_dict = {}
-        # for i in range(args.num_agent):
-        #     action_dict["agent_{}".format(i)] = action[i]
-        obs_next, reward, done, info = env.step(action)
-        if done['__all__']:
-            print("done")
-            obs_next = env.reset()
-        for i in range(args.num_agent):
-            if not np.array_equal(obs["agent_{}".format(i)], obs_next["agent_{}".format(i)]):
-                print('obs changes')
-                print(np.sum(obs["agent_{}".format(i)] - obs_next["agent_{}".format(i)]))
-                print(obs["agent_{}".format(i)].shape)
-        # if not np.array_equal(obs, obs_next):
-        #     flag += 1
-        obs = obs_next
+    return ShareSubprocVecEnv([get_env_fn(i) for i in range(args.n_rollout)])

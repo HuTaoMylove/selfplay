@@ -1,22 +1,15 @@
 from arguments import get_args
-from selfplay_runner import Runner
+from selfplay_runner import ShareRunner
 import gfootball.env as football_env
-from gfootball_net import NNetWrapper as nn
-from utils import *
-from multiagent_setup import FootballEnv,get_env
-import numpy as np
-import torch
-import sys
+# from utils import *
+from multiagent_setup import get_env
 import os
 import traceback
-import wandb
-import socket
 import torch
 import random
 import logging
 import numpy as np
 from pathlib import Path
-import setproctitle
 
 if __name__ == '__main__':
     all_args = get_args()
@@ -24,6 +17,8 @@ if __name__ == '__main__':
     random.seed(all_args.seed)
     torch.manual_seed(all_args.seed)
     torch.cuda.manual_seed_all(all_args.seed)
+
+
     envs = get_env(all_args)
 
     run_dir = Path("./results") \
@@ -54,7 +49,8 @@ if __name__ == '__main__':
         "log_dir": log_dir
     }
 
-    runner = Runner(config)
+    logging.basicConfig(level=logging.DEBUG, format="%(message)s")
+    runner = ShareRunner(config)
     try:
         runner.run()
     except BaseException:
@@ -64,34 +60,3 @@ if __name__ == '__main__':
         envs.close()
 
 
-    nnet = nn(env, args)
-    c = Coach(env, nnet, args)
-    vloss_hist, ploss_hist = c.learn()
-    vloss_hist = np.array(vloss_hist)
-    ploss_hist = np.array(ploss_hist)
-    np.save('ploss_hist.npy', ploss_hist)
-    np.save('vloss_hist.npy', vloss_hist)
-    env.close()
-
-    # if is_train == False:
-    #     model_path = '11_vs_11_competition.pth'
-    #     args = get_args()
-    #     args.render = False  # change to True if you want to see the play
-    #     args.left_agent = 2
-    #     args.right_agent = 2
-    #     args.num_agent = 4
-    #     env = RllibGFootball(args)
-    #     # network = nn(env, args)
-    #     # network.load_state_dict(model_path)
-    #     obs = env.reset()
-    #     for _ in range(int(1e4)):
-    #         action = {}
-    #         for i in range(args.num_agent):
-    #             # with torch.no_grad():
-    #             #     pi, _ = network.predict(obs['agent_{}'.format(i)])
-    #             # action['agent_{}'.format(i)] = np.random.choice(len(pi), p=pi)
-    #             action['agent_{}'.format(i)] = int(np.random.rand(1) * 19)
-    #         obs, reward, done, _ = env.step(action)
-    #         if done:
-    #             obs = env.reset()
-    #     env.close()
