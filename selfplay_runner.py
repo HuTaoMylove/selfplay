@@ -8,6 +8,7 @@ from typing import List
 from torch.utils.tensorboard import SummaryWriter
 from algorithm.utils.buffer import SharedReplayBuffer
 import os
+import json
 
 
 def _t2n(x):
@@ -19,34 +20,33 @@ class ShareRunner:
 
         self.all_args = config['all_args']
         self.envs = config['envs']
+        self.eval_envs = config['eval_envs']
         self.device = config['device']
 
         # parameters
         self.env_name = self.all_args.env_name
         self.num_env_steps = int(self.all_args.num_env_steps)
         self.n_rollout_threads = self.all_args.n_rollout
+        self.n_eval_rollout_threads = self.all_args.n_eval_rollout
         self.buffer_size = self.all_args.buffer_size
 
         # interval
-        # self.save_interval = self.all_args.save_interval
+        self.save_interval = self.all_args.save_interval
         self.log_interval = self.all_args.log_interval
-        # self.use_eval = self.all_args.use_eval
-        # self.eval_interval = self.all_args.eval_interval
-        # self.eval_episodes = self.all_args.eval_episodes
+
+        # eval
+        self.use_eval = self.all_args.use_eval
+        self.eval_interval = self.all_args.eval_interval
+        self.eval_episodes = self.all_args.eval_episodes
+        self.latest_elo = self.all_args.init_elo
 
         # dir
-        self.log_dir = config["log_dir"]
-        # self.model_dir = self.all_args.model_dir
+        self.log_dir = config["log_dir"] / self.all_args.selfplay_algorithm
         self.run_dir = config["run_dir"]
-        self.save_dir = str(self.run_dir)
+        self.save_dir = self.run_dir / self.all_args.selfplay_algorithm
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
-        self.model_dir = None
-        if self.model_dir is not None:
-            if self.run_dir.parts[-1] != 'render':
-                self.writer = SummaryWriter(self.log_dir / self.model_dir.parts[-1])
-        else:
-            self.writer = SummaryWriter(self.log_dir)
+        self.writer = SummaryWriter(self.log_dir)
         self.load()
 
     def load(self):
@@ -61,9 +61,6 @@ class ShareRunner:
 
         self.policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
         self.trainer = Trainer(self.all_args, device=self.device)
-
-        # buffer
-
         self.buffer = SharedReplayBuffer(self.all_args, self.num_agents // 2, self.obs_space, self.share_obs_space,
                                          self.act_space)
 
@@ -74,23 +71,37 @@ class ShareRunner:
         assert self.all_args.n_choose_opponents <= self.n_rollout_threads, \
             "Number of different opponents({}) must less than or equal to number of training threads({})!" \
                 .format(self.all_args.n_choose_opponents, self.n_rollout_threads)
+
         self.policy_pool = {'latest': self.all_args.init_elo}  # type: dict[str, float]
         self.opponent_policy = [
             Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
             for _ in range(self.all_args.n_choose_opponents)]
         self.opponent_env_split = np.array_split(np.arange(self.n_rollout_threads), len(self.opponent_policy))
+
         self.opponent_obs = np.zeros_like(self.buffer.obs[0])
         self.opponent_rnn_states = np.zeros_like(self.buffer.rnn_states_actor[0])
         self.opponent_masks = np.ones_like(self.buffer.masks[0])
+        self.num_opponents = self.all_args.num_opponents
 
         self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
                                            device=self.device)
 
+        if len(os.listdir(self.save_dir)) > 0:
+            self.restore()
+
         logging.info("\n Load selfplay opponents: Algo {}, num_opponents {}.\n"
                      .format(self.all_args.selfplay_algorithm, self.all_args.n_choose_opponents))
 
-        # if self.model_dir is not None:
-        #     self.restore()
+    def restore(self):
+        policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
+        self.policy.actor.load_state_dict(policy_actor_state_dict)
+        policy_critic_state_dict = torch.load(str(self.save_dir) + '/critic_latest.pt')
+        self.policy.critic.load_state_dict(policy_critic_state_dict)
+        if os.path.exists(str(self.save_dir) + '/elo.txt'):
+            with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
+                self.policy_pool = json.load(file)
+            self.latest_elo = list(self.policy_pool.values())[-1]
+            self.reset_opponent()
 
     def train(self):
         self.policy.prep_training()
@@ -101,12 +112,20 @@ class ShareRunner:
     def run(self):
         self.warmup()
 
-        start = time.time()
         self.total_num_steps = 0
         episodes = self.num_env_steps // self.buffer_size // self.n_rollout_threads
+        already_trained_episodes = -1
+        if len(os.listdir(str(self.log_dir))) > 1:
+            from tensorboard.backend.event_processing import event_accumulator
+            # ea = event_accumulator.EventAccumulator(str(self.log_dir / str(self.model_dir).split('\\')[-1]))
+            ea = event_accumulator.EventAccumulator(str(self.log_dir))
+            ea.Reload()
+            # assert len(ea.scalars.Keys()) != 0, 'log data should not none!'
+            already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards'))
+            logging.info(f'already trained {already_trained_episodes} episodes')
 
-        for episode in range(episodes):
-
+        for episode in range(already_trained_episodes + 1, episodes):
+            start = time.time()
             for step in range(self.buffer_size):
                 # Sample actions
                 values, actions, action_log_probs, rnn_states_actor, rnn_states_critic = self.collect(step)
@@ -122,11 +141,7 @@ class ShareRunner:
             train_infos = self.train()
             # self.render()
             # post process
-            self.total_num_steps = (episode + 1) * self.buffer_size * self.n_rollout_threads
-
-            # save model
-            # if (episode % self.save_interval == 0) or (episode == episodes - 1):
-            #     self.save(episode)
+            self.total_num_steps = self.buffer_size * self.n_rollout_threads
 
             # log information
             if episode % self.log_interval == 0:
@@ -139,13 +154,17 @@ class ShareRunner:
                             self.num_env_steps,
                             int(self.total_num_steps / (end - start))))
 
-                train_infos["average_episode_rewards"] = self.buffer.rewards.sum() / ((self.buffer.masks == False).sum()+1)
+                train_infos["average_episode_rewards"] = self.buffer.rewards.sum() / (
+                        (self.buffer.masks == False).sum() + 1)
                 logging.info("average episode rewards is {}".format(train_infos["average_episode_rewards"]))
                 self.log_info(train_infos, self.total_num_steps)
 
-            # eval
-            # if episode % self.eval_interval == 0 and self.use_eval:
-            #     self.eval(self.total_num_steps)
+            if episode % self.eval_interval == 0 and episode != 0 and self.use_eval:
+                self.eval(self.total_num_steps)
+
+            # save model
+            if (episode % self.save_interval == 0) or (episode == episodes - 1):
+                self.save(episode)
 
     def warmup(self):
         # reset env
@@ -227,156 +246,129 @@ class ShareRunner:
     @torch.no_grad()
     def eval(self, total_num_steps):
         logging.info("\nStart evaluation...")
-        total_episodes, eval_episode_rewards = 0, []
-        eval_cumulative_rewards = np.zeros((self.n_eval_rollout_threads, *self.buffer.rewards.shape[2:]),
-                                           dtype=np.float32)
-
-        eval_obs, eval_share_obs = self.eval_envs.reset()
-        eval_masks = np.ones((self.n_eval_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
-        eval_rnn_states = np.zeros((self.n_eval_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
-                                   dtype=np.float32)
+        self.policy.prep_rollout()
+        total_episodes = 0
+        episode_rewards, opponent_episode_rewards = [], []
+        cumulative_rewards = np.zeros((self.n_eval_rollout_threads, *self.buffer.rewards.shape[2:]), dtype=np.float32)
+        opponent_cumulative_rewards = np.zeros_like(cumulative_rewards)
 
         # [Selfplay] Choose opponent policy for evaluation
-        if self.use_selfplay:
-            eval_choose_opponents = [self.selfplay_algo.choose(self.policy_pool) for _ in
-                                     range(self.all_args.n_choose_opponents)]
-            assert self.eval_episodes >= self.all_args.n_choose_opponents, \
-                f"Number of evaluation episodes:{self.eval_episodes} should be greater than number of opponents:{self.all_args.n_choose_opponents}"
-            eval_each_episodes = self.eval_episodes // self.all_args.n_choose_opponents
-            eval_cur_opponent_idx = 0
-            logging.info(f" Choose opponents {eval_choose_opponents} for evaluation")
-            # TODO: use eval results to update elo
+        eval_choose_opponents = [self.selfplay_algo.choose(self.policy_pool) for _ in range(self.num_opponents)]
+        eval_each_episodes = self.eval_episodes // self.num_opponents
+        logging.info(f" Choose opponents {eval_choose_opponents} for evaluation")
 
+        eval_cur_opponent_idx = 0
         while total_episodes < self.eval_episodes:
 
             # [Selfplay] Load opponent policy
-            if self.use_selfplay and total_episodes >= eval_cur_opponent_idx * eval_each_episodes:
+            if total_episodes >= eval_cur_opponent_idx * eval_each_episodes:
                 policy_idx = eval_choose_opponents[eval_cur_opponent_idx]
                 self.eval_opponent_policy.actor.load_state_dict(
                     torch.load(str(self.save_dir) + f'/actor_{policy_idx}.pt'))
                 self.eval_opponent_policy.prep_rollout()
                 eval_cur_opponent_idx += 1
-                logging.info(f" Load opponent {policy_idx} for evaluation ({total_episodes + 1}/{self.eval_episodes})")
+                logging.info(f" Load opponent {policy_idx} for evaluation ({total_episodes}/{self.eval_episodes})")
 
                 # reset obs/rnn/mask
-                eval_obs, eval_share_obs = self.eval_envs.reset()
-                eval_masks = np.ones_like(eval_masks, dtype=np.float32)
-                eval_rnn_states = np.zeros_like(eval_rnn_states, dtype=np.float32)
-                eval_opponent_obs = eval_obs[:, self.num_agents // 2:, ...]
-                eval_obs = eval_obs[:, :self.num_agents // 2, ...]
-                eval_opponent_masks = np.ones_like(eval_masks, dtype=np.float32)
-                eval_opponent_rnn_states = np.zeros_like(eval_rnn_states, dtype=np.float32)
+                obs, _ = self.eval_envs.reset()
 
-            self.policy.prep_rollout()
-            eval_actions, eval_rnn_states = self.policy.act(np.concatenate(eval_obs),
-                                                            np.concatenate(eval_rnn_states),
-                                                            np.concatenate(eval_masks), deterministic=True)
-            eval_actions = np.array(np.split(_t2n(eval_actions), self.n_eval_rollout_threads))
-            eval_rnn_states = np.array(np.split(_t2n(eval_rnn_states), self.n_eval_rollout_threads))
+                opponent_obs = obs[:, self.num_agents // 2:, ...]
+                obs = obs[:, :self.num_agents // 2, ...]
 
-            # [Selfplay] get actions of opponent policy
-            if self.use_selfplay:
-                eval_opponent_actions, eval_opponent_rnn_states \
-                    = self.eval_opponent_policy.act(np.concatenate(eval_opponent_obs),
-                                                    np.concatenate(eval_opponent_rnn_states),
-                                                    np.concatenate(eval_opponent_masks))
-                eval_opponent_rnn_states = np.array(
-                    np.split(_t2n(eval_opponent_rnn_states), self.n_eval_rollout_threads))
-                eval_opponent_actions = np.array(np.split(_t2n(eval_opponent_actions), self.n_eval_rollout_threads))
-                eval_actions = np.concatenate((eval_actions, eval_opponent_actions), axis=1)
+                masks = np.ones((self.n_eval_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
+                opponent_masks = np.ones_like(masks, dtype=np.float32)
+                rnn_states = np.zeros((self.n_eval_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
+                                      dtype=np.float32)
+                opponent_rnn_states = np.zeros_like(rnn_states, dtype=np.float32)
+
+            # [Selfplay] get actions
+            actions, rnn_states = self.policy.act(np.concatenate(obs),
+                                                  np.concatenate(rnn_states),
+                                                  np.concatenate(masks), deterministic=True)
+            actions = np.array(np.split(_t2n(actions), self.n_eval_rollout_threads))
+            rnn_states = np.array(np.split(_t2n(rnn_states), self.n_eval_rollout_threads))
+
+            opponent_actions, opponent_rnn_states \
+                = self.eval_opponent_policy.act(np.concatenate(opponent_obs),
+                                                np.concatenate(opponent_rnn_states),
+                                                np.concatenate(opponent_masks), deterministic=True)
+            opponent_rnn_states = np.array(np.split(_t2n(opponent_rnn_states), self.n_eval_rollout_threads))
+            opponent_actions = np.array(np.split(_t2n(opponent_actions), self.n_eval_rollout_threads))
+            actions = np.concatenate((actions, opponent_actions), axis=1)
 
             # Obser reward and next obs
-            eval_obs, eval_share_obs, eval_rewards, eval_dones, eval_infos = self.eval_envs.step(eval_actions)
+            obs, _, eval_rewards, dones, eval_infos = self.eval_envs.step(actions)
+            eval_rewards = np.expand_dims(eval_rewards, axis=-1)
+            dones = np.ones([self.n_eval_rollout_threads, self.num_agents]) * dones.reshape(-1, 1)
+            dones_env = np.all(dones, axis=-1)
 
-            # [Selfplay] get ego reward
-            if self.use_selfplay:
-                eval_rewards = eval_rewards[:, :self.num_agents // 2, ...]
+            total_episodes += np.sum(dones_env)
 
-            eval_cumulative_rewards += eval_rewards
-            eval_dones_env = np.all(eval_dones.squeeze(axis=-1), axis=-1)
-            total_episodes += np.sum(eval_dones_env)
-            eval_episode_rewards.append(eval_cumulative_rewards[eval_dones_env == True])
-            eval_cumulative_rewards[eval_dones_env == True] = 0
+            # [Selfplay] Reset obs, masks, rnn_states
+            opponent_obs = obs[:, self.num_agents // 2:, ...]
+            obs = obs[:, :self.num_agents // 2, ...]
+            masks[dones_env == True] = np.zeros(((dones_env == True).sum(), *masks.shape[1:]), dtype=np.float32)
+            rnn_states[dones_env == True] = np.zeros(((dones_env == True).sum(), *rnn_states.shape[1:]),
+                                                     dtype=np.float32)
 
-            eval_masks = np.ones_like(eval_masks, dtype=np.float32)
-            eval_masks[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), *eval_masks.shape[1:]),
-                                                          dtype=np.float32)
-            eval_rnn_states[eval_dones_env == True] = np.zeros(
-                ((eval_dones_env == True).sum(), *eval_rnn_states.shape[1:]), dtype=np.float32)
-            # [Selfplay] reset opponent mask/rnn_states
-            if self.use_selfplay:
-                eval_opponent_obs = eval_obs[:, self.num_agents // 2:, ...]
-                eval_obs = eval_obs[:, :self.num_agents // 2, ...]
-                eval_opponent_masks[eval_dones_env == True] = \
-                    np.zeros(((eval_dones_env == True).sum(), *eval_opponent_masks.shape[1:]), dtype=np.float32)
-                eval_opponent_rnn_states[eval_dones_env == True] = \
-                    np.zeros(((eval_dones_env == True).sum(), *eval_opponent_rnn_states.shape[1:]), dtype=np.float32)
+            opponent_masks[dones_env == True] = \
+                np.zeros(((dones_env == True).sum(), *opponent_masks.shape[1:]), dtype=np.float32)
+            opponent_rnn_states[dones_env == True] = \
+                np.zeros(((dones_env == True).sum(), *opponent_rnn_states.shape[1:]), dtype=np.float32)
+
+            # [Selfplay] Get rewards
+            opponent_rewards = eval_rewards[:, self.num_agents // 2:, ...]
+            opponent_cumulative_rewards += opponent_rewards
+            opponent_episode_rewards.append(opponent_cumulative_rewards[dones_env == True])
+            opponent_cumulative_rewards[dones_env == True] = 0
+
+            eval_rewards = eval_rewards[:, :self.num_agents // 2, ...]
+            cumulative_rewards += eval_rewards
+            episode_rewards.append(cumulative_rewards[dones_env == True])
+            cumulative_rewards[dones_env == True] = 0
+
+        # Compute average episode rewards
+        # np.zeros((self.n_eval_rollout_threads, *self.buffer.rewards.shape[2:]), dtype=np.float32)
+        episode_rewards = np.concatenate(episode_rewards)  # shape (self.eval_episodes, self.num_agents, 1)
+        episode_rewards = episode_rewards.squeeze(-1).mean(axis=-1)  # shape: (self.eval_episodes,)
+        eval_average_episode_rewards = np.array(np.split(episode_rewards, self.num_opponents)).mean(
+            axis=-1)  # shape (self.num_opponents,)
+
+        opponent_episode_rewards = np.concatenate(opponent_episode_rewards)
+        opponent_episode_rewards = opponent_episode_rewards.squeeze(-1).mean(axis=-1)
+        opponent_average_episode_rewards = np.array(np.split(opponent_episode_rewards, self.num_opponents)).mean(
+            axis=-1)
+
+        # Update elo
+        ego_elo = np.array([self.latest_elo for _ in range(self.n_eval_rollout_threads)])
+        opponent_elo = np.array([self.policy_pool[key] for key in eval_choose_opponents])
+        expected_score = 1 / (1 + 10 ** ((opponent_elo - ego_elo) / 400))
+
+        actual_score = np.zeros_like(expected_score)
+        diff = opponent_average_episode_rewards - eval_average_episode_rewards
+        actual_score[diff > 1] = 1  # win
+        actual_score[abs(diff) < 1] = 0.5  # tie
+        actual_score[diff < -1] = 0  # lose
+        logging.info(f' win rate is {np.mean(actual_score == 0)},tie rate is {np.mean(actual_score == 0.5)}')
+        elo_gain = 32 * (actual_score - expected_score)
+        update_opponent_elo = opponent_elo + elo_gain
+        for i, key in enumerate(eval_choose_opponents):
+            self.policy_pool[key] = update_opponent_elo[i]
+        ego_elo = ego_elo - elo_gain
+        self.latest_elo = ego_elo.mean()
 
         eval_infos = {}
-        eval_infos['eval_average_episode_rewards'] = np.concatenate(eval_episode_rewards).mean()
+        eval_infos['eval_average_episode_rewards'] = eval_average_episode_rewards.mean()
+        eval_infos['latest_elo'] = self.latest_elo
         logging.info(" eval average episode rewards: " + str(eval_infos['eval_average_episode_rewards']))
-        self.log_info(eval_infos, total_num_steps)
-
-        # [Selfplay] Reset opponent
-        if self.use_selfplay:
-            self.reset_opponent()
+        logging.info(" latest elo score: " + str(self.latest_elo))
+        self.log_info(eval_infos, total_num_steps, mode='eval')
         logging.info("...End evaluation")
 
-    @torch.no_grad()
-    def render(self):
-        logging.info("\nStart render ...")
-        self.render_opponent_index = self.all_args.render_opponent_index
-        render_episode_rewards = 0
-        render_obs, render_share_obs = self.envs.reset()
-        render_masks = np.ones((1, *self.buffer.masks.shape[2:]), dtype=np.float32)
-        render_rnn_states = np.zeros((1, *self.buffer.rnn_states_actor.shape[2:]), dtype=np.float32)
-        self.envs.render(mode='txt', filepath=f'{self.run_dir}/{self.experiment_name}.txt.acmi')
-        if self.use_selfplay:
-            policy_idx = self.render_opponent_index
-            self.eval_opponent_policy.actor.load_state_dict(torch.load(str(self.model_dir) + f'/actor_{policy_idx}.pt'))
-            self.eval_opponent_policy.prep_rollout()
-            # reset obs/rnn/mask
-            render_obs, render_share_obs = self.envs.reset()
-            render_masks = np.ones_like(render_masks, dtype=np.float32)
-            render_rnn_states = np.zeros_like(render_rnn_states, dtype=np.float32)
-            render_opponent_obs = render_obs[:, self.num_agents // 2:, ...]
-            render_obs = render_obs[:, :self.num_agents // 2, ...]
-            render_opponent_masks = np.ones_like(render_masks, dtype=np.float32)
-            render_opponent_rnn_states = np.zeros_like(render_rnn_states, dtype=np.float32)
-        while True:
-            self.policy.prep_rollout()
-            render_actions, render_rnn_states = self.policy.act(np.concatenate(render_obs),
-                                                                np.concatenate(render_rnn_states),
-                                                                np.concatenate(render_masks),
-                                                                deterministic=True)
-            render_actions = np.expand_dims(_t2n(render_actions), axis=0)
-            render_rnn_states = np.expand_dims(_t2n(render_rnn_states), axis=0)
-
-            # [Selfplay] get actions of opponent policy
-            if self.use_selfplay:
-                render_opponent_actions, render_opponent_rnn_states \
-                    = self.eval_opponent_policy.act(np.concatenate(render_opponent_obs),
-                                                    np.concatenate(render_opponent_rnn_states),
-                                                    np.concatenate(render_opponent_masks),
-                                                    deterministic=True)
-                render_opponent_actions = np.expand_dims(_t2n(render_opponent_actions), axis=0)
-                render_opponent_rnn_states = np.expand_dims(_t2n(render_opponent_rnn_states), axis=0)
-                render_actions = np.concatenate((render_actions, render_opponent_actions), axis=1)
-            # Obser reward and next obs
-            render_obs, render_share_obs, render_rewards, render_dones, render_infos = self.envs.step(render_actions)
-            if self.use_selfplay:
-                render_rewards = render_rewards[:, :self.num_agents // 2, ...]
-            render_episode_rewards += render_rewards
-            self.envs.render(mode='txt', filepath=f'{self.run_dir}/{self.experiment_name}.txt.acmi')
-            if render_dones.all():
-                break
-            if self.use_selfplay:
-                render_opponent_obs = render_obs[:, self.num_agents // 2:, ...]
-                render_obs = render_obs[:, :self.num_agents // 2, ...]
-
-        render_infos = {}
-        render_infos['render_episode_reward'] = render_episode_rewards
-        logging.info("render episode reward of agent: " + str(render_infos['render_episode_reward']))
+        with open(str(self.save_dir) + '/elo.txt', 'w') as file:
+            file.write(json.dumps(self.policy_pool))
+            file.close()
+        self.reset_opponent()
 
     def save(self, episode):
         policy_actor_state_dict = self.policy.actor.state_dict()
@@ -384,9 +376,8 @@ class ShareRunner:
         policy_critic_state_dict = self.policy.critic.state_dict()
         torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
         # [Selfplay] save policy & performance
-        if self.use_selfplay:
-            torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
-            self.policy_pool[str(episode)] = self.all_args.init_elo
+        torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
+        self.policy_pool[str(episode)] = self.latest_elo
 
     def reset_opponent(self):
         choose_opponents = []
@@ -413,6 +404,6 @@ class ShareRunner:
         self.buffer.share_obs[0] = share_obs.copy()
 
     def log_info(self, infos, total_num_steps, mode='train'):
-        assert mode in ['train', 'eval']
+        assert mode in ['train', 'eval', 'test']
         for k, v in infos.items():
             self.writer.add_scalar(mode + '/' + k, v, total_num_steps)

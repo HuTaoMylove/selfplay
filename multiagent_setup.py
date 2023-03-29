@@ -12,9 +12,10 @@ import ray
 from ray import tune
 from ray.rllib.env.multi_agent_env import MultiAgentEnv
 from ray.tune.registry import register_env
-from env_wrappers import ShareSubprocVecEnv
+from env_wrappers import ShareSubprocVecEnv, ShareDummyVecEnv
 import numpy as np
 from arguments import get_args
+
 
 class FootballEnv:
     """An example of a wrapper for GFootball to make it compatible with rllib."""
@@ -49,7 +50,7 @@ class FootballEnv:
         share_obs_shape[-1] = share_obs_shape[-1] + self.num_agents // 2 - 1
         self.share_observation_space = gym.spaces.Box(
             low=np.zeros(share_obs_shape),
-            high=np.ones(share_obs_shape)*255,
+            high=np.ones(share_obs_shape) * 255,
             dtype=self.env.observation_space.dtype)
 
     def reset(self):
@@ -94,4 +95,33 @@ def get_env(args):
 
         return init_env
 
-    return ShareSubprocVecEnv([get_env_fn(i) for i in range(args.n_rollout)])
+    if args.n_rollout == 1:
+        return ShareDummyVecEnv([get_env_fn(0)])
+    else:
+        return ShareSubprocVecEnv([get_env_fn(i) for i in range(args.n_rollout)])
+
+
+def get_eval_env(args):
+    def get_env_fn(rank):
+        def init_env():
+            env = FootballEnv(args)
+            env.seed(args.seed*5000 + rank * 1000)
+            return env
+
+        return init_env
+
+    if args.n_eval_rollout == 1:
+        return ShareDummyVecEnv([get_env_fn(0)])
+    else:
+        return ShareSubprocVecEnv([get_env_fn(i) for i in range(args.n_eval_rollout)])
+
+def get_test_env(args):
+    def get_env_fn(rank):
+        def init_env():
+            env = FootballEnv(args)
+            env.seed(args.seed*5000 + rank * 1000)
+            return env
+
+        return init_env
+
+    return ShareSubprocVecEnv([get_env_fn(i) for i in range(5)])

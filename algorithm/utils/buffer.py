@@ -56,6 +56,20 @@ class SharedReplayBuffer:
     def _flatten(T: int, N: int, x: np.ndarray):
         return x.reshape(T * N, *x.shape[2:])
 
+    def clear(self):
+        self.step = 0
+        self.obs = np.zeros_like(self.obs, dtype=np.float32)
+        self.actions = np.zeros_like(self.actions, dtype=np.float32)
+        self.rewards = np.zeros_like(self.rewards, dtype=np.float32)
+        self.masks = np.ones_like(self.masks, dtype=np.float32)
+        self.action_log_probs = np.zeros_like(self.action_log_probs, dtype=np.float32)
+        self.value_preds = np.zeros_like(self.value_preds, dtype=np.float32)
+        self.returns = np.zeros_like(self.returns, dtype=np.float32)
+        self.rnn_states_actor = np.zeros_like(self.rnn_states_critic)
+        self.rnn_states_critic = np.zeros_like(self.rnn_states_actor)
+        self.share_obs = np.zeros_like(self.share_obs)
+
+
     @property
     def advantages(self) -> np.ndarray:
         advantages = self.returns[:-1] - self.value_preds[:-1]  # type: np.ndarray
