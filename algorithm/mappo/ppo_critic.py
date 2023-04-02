@@ -18,9 +18,12 @@ class PPOCritic(nn.Module):
         self.recurrent_hidden_size = args.recurrent_hidden_size
         self.recurrent_hidden_layers = args.recurrent_hidden_layers
         self.tpdv = dict(dtype=torch.float32, device=device)
+        self.hidden_size=args.hidden_size
         # (1) feature extraction module
-        self.base = ConvBase(observation_space=obs_space, output_size=256)
-        self.rnn = GRULayer(256, self.recurrent_hidden_size, self.recurrent_hidden_layers)
+        # self.base = ConvBase(observation_space=obs_space, output_size=256)
+        self.base = MLPBase(obs_space, self.hidden_size, self.activation_id)
+        input_size = self.base.output_size
+        self.rnn = GRULayer(input_size, self.recurrent_hidden_size, self.recurrent_hidden_layers)
         input_size = self.rnn.output_size
         if len(self.act_hidden_size) > 0:
             self.mlp = MLPLayer(input_size, self.act_hidden_size, self.activation_id)

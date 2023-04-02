@@ -29,7 +29,11 @@ class SP(SelfplayAlgorithm):
 
     @staticmethod
     def choose(agents_elo: Dict[str, float], **kwargs) -> str:
-        return list(agents_elo.keys())[-1]
+        keylist = []
+        for i in agents_elo.keys():
+            keylist.append(int(i))
+        keylist.sort()
+        return str(keylist[-1])
 
     @staticmethod
     def update(agents_elo: Dict[str, float], eval_results: Dict[str, List[float]], **kwargs) -> None:

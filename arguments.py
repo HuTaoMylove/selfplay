@@ -8,21 +8,21 @@ def get_args():
     env para
     """
     parse.add_argument('--env_name', type=str, default='5_vs_5')
-    parse.add_argument('--num_env_steps', type=int, default=1e9, help='the steps to collect samples')
-    parse.add_argument('--cuda', action='store_true', default=True, help='use cuda do the training')
-    parse.add_argument('--num_agent', type=int, default=8)
-    parse.add_argument('--left_agent', type=int, default=4)
-    parse.add_argument('--right_agent', type=int, default=4)
+    parse.add_argument('--num_env_steps', type=int, default=1e8, help='the steps to collect samples')
+    parse.add_argument('--cuda', action='store_true', default=False, help='use cuda do the training')
+    parse.add_argument('--num_agent', type=int, default=4)
+    parse.add_argument('--left_agent', type=int, default=2)
+    parse.add_argument('--right_agent', type=int, default=2)
     parse.add_argument('--rewards', type=str, default='scoring,checkpoints')
     parse.add_argument('--render', type=bool, default=False, help='show nr not')
 
     """
     selfplay para
     """
-
+    parse.add_argument('--n-rollout', type=int, default=15, help='the number of para env')
     parse.add_argument("--selfplay-algorithm", type=str, default='sp', choices=["sp", "fsp", "pfsp"],
                        help="Specifiy the selfplay algorithm (default 'sp')")
-    parse.add_argument('--n-choose-opponents', type=int, default=3,
+    parse.add_argument('--n-choose-opponents', type=int, default=5,
                        help="number of different opponents chosen for rollout. (default 1)")
     parse.add_argument('--init-elo', type=float, default=1000.0,
                        help="initial ELO for policy performance. (default 1000.0)")
@@ -30,14 +30,17 @@ def get_args():
     """
     networt para
     """
+    parse.add_argument("--obs-version", type=str, default='v0')
 
-    parse.add_argument("--act-hidden-size", type=str, default='256 256',
-                       help="Dimension of hidden layers for actlayer (default '256 256')")
+    parse.add_argument("--hidden-size", type=str, default='128 128',
+                       help="Dimension of hidden layers for mlp pre-process")
+    parse.add_argument("--act-hidden-size", type=str, default='128 128',
+                       help="Dimension of hidden layers for actlayer (default '128 128')")
     parse.add_argument("--activation-id", type=int, default=1,
                        help="Choose 0 to use Tanh, 1 to use ReLU, 2 to use LeakyReLU, 3 to use ELU (default 1)")
     parse.add_argument("--gain", type=float, default=0.01,
                        help="The gain # of last action layer")
-    parse.add_argument("--recurrent-hidden-size", type=int, default=256,
+    parse.add_argument("--recurrent-hidden-size", type=int, default=128,
                        help="Dimension of hidden layers for recurrent layers (default 128)")
     parse.add_argument("--recurrent-hidden-layers", type=int, default=1,
                        help="The number of recurrent layers (default 1)")
@@ -45,16 +48,16 @@ def get_args():
     """
     train para
     """
-    parse.add_argument('--n-rollout', type=int, default=6, help='the number of para env')
-    parse.add_argument("--buffer-size", type=int, default=3001,
+
+    parse.add_argument("--buffer-size", type=int, default=4000,
                        help="maximum storage in the buffer.")
     parse.add_argument("--data-chunk-length", type=int, default=16,
                        help="Time length of chunks used to train a recurrent_policy (default 16)")
-    parse.add_argument("--num-mini-batch", type=int, default=5,
+    parse.add_argument("--num-mini-batch", type=int, default=16,
                        help='number of batches for ppo (default: 1)')
     parse.add_argument("--gamma", type=float, default=0.99,
                        help='discount factor for rewards (default: 0.99)')
-    parse.add_argument("--ppo-epoch", type=int, default=4,
+    parse.add_argument("--ppo-epoch", type=int, default=6,
                        help='number of ppo epochs (default: 10)')
     parse.add_argument('--lr', type=float, default=0.001, help='learning rate of the algorithm')
 
@@ -75,20 +78,18 @@ def get_args():
     parse.add_argument("--max-grad-norm", type=float, default=2,
                        help='max norm of gradients (default: 2)')
 
-
     """
     eval para
     """
 
     parse.add_argument("--use-eval", action='store_true', default=True,
                        help="by default, do not start evaluation. If set, start evaluation alongside with training.")
-    parse.add_argument("--num-opponents", type=int, default=3,
+    # parse.add_argument("--num-opponents", type=int, default=3,
+    #                    help="Number of parallel envs for evaluating rollout (default 1)")
+    parse.add_argument("--n-eval-rollout", type=int, default=4,
                        help="Number of parallel envs for evaluating rollout (default 1)")
-    parse.add_argument("--n-eval-rollout", type=int, default=1,
-                       help="Number of parallel envs for evaluating rollout (default 1)")
-    parse.add_argument("--eval-episodes", type=int, default=3,
+    parse.add_argument("--eval-episodes", type=int, default=20,
                        help="number of episodes of a single evaluation. (default 32)")
-
 
     """
     
@@ -97,6 +98,8 @@ def get_args():
     """
     parse.add_argument("--n-test-rollout", type=int, default=5,
                        help="number of episodes of a single evaluation. (default 32)")
+    parse.add_argument("--test-episodes", type=int, default=4,
+                       help="number of episodes of a single evaluation. (default 32)")
 
     """
     interval para
@@ -104,8 +107,8 @@ def get_args():
 
     parse.add_argument('--save-interval', type=int, default=5, help='the number of save')
     parse.add_argument('--log-interval', type=int, default=1, help='the number of log')
-    parse.add_argument("--eval-interval", type=int, default=5 , help="time duration between contiunous twice "
-                                                                    "evaluation progress. (default 25)")
+    parse.add_argument("--eval-interval", type=int, default=5, help="time duration between contiunous twice "
+                                                                     "evaluation progress. (default 25)")
     parse.add_argument("--test-interval", type=int, default=5, help="time duration between contiunous twice "
                                                                     "evaluation progress. (default 25)")
     parse.add_argument('--seed', type=int, default=123, help='the random seeds')

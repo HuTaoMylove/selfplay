@@ -24,6 +24,7 @@ class FootballEnv:
         assert args.num_agent == args.left_agent + args.right_agent
         env = football_env.create_environment(
             env_name=args.env_name,
+            representation='simple115',
             stacked=False,
             rewards=args.rewards,
             write_goal_dumps=False, write_full_episode_dumps=False,
@@ -31,7 +32,7 @@ class FootballEnv:
             dump_frequency=0,
             number_of_left_players_agent_controls=args.left_agent,
             number_of_right_players_agent_controls=args.right_agent,
-            channel_dimensions=(42, 42))
+        )
         return env
 
     def n_agents(self):
@@ -44,37 +45,29 @@ class FootballEnv:
         self.observation_space = gym.spaces.Box(
             low=self.env.observation_space.low[0],
             high=self.env.observation_space.high[0],
-            dtype=self.env.observation_space.dtype)
-        share_obs_shape = np.array(self.observation_space.shape)
-        share_obs_shape[-1] = share_obs_shape[-1] + self.num_agents // 2 - 1
+            dtype=float)
         self.share_observation_space = gym.spaces.Box(
-            low=np.zeros(share_obs_shape),
-            high=np.ones(share_obs_shape) * 255,
-            dtype=self.env.observation_space.dtype)
+            low=self.env.observation_space.low[0][:-1],
+            high=self.env.observation_space.high[0][:-1],
+            dtype=float)
 
     def reset(self):
         o = self.env.reset()
         half = int(self.num_agents // 2)
-        left_half = np.concatenate([o[0], np.concatenate(np.expand_dims(o[1:half, ..., -1], -1), -1)], axis=-1)
-        left_half = np.expand_dims(left_half, axis=0)
-        left_half = np.concatenate([left_half] * half, axis=0)
-        right_half = np.concatenate([o[half], np.concatenate(np.expand_dims(o[half + 1:half * 2, ..., -1], -1), -1)],
-                                    axis=-1)
-        right_half = np.expand_dims(right_half, axis=0)
-        right_half = np.concatenate([right_half] * half, axis=0)
+        left_half = np.concatenate(
+            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:half, -3], axis=0)], axis=-1)] * half)
+        right_half = np.concatenate(
+            [np.concatenate([np.expand_dims(o[half][:-3], 0), np.expand_dims(o[half:, -3], axis=0)], axis=-1)] * half)
         share_o = np.concatenate([left_half, right_half], axis=0)
         return o, share_o
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
         o, r, d, i = self.env.step(action.reshape(self.num_agents, ))
         half = int(self.num_agents // 2)
-        left_half = np.concatenate([o[0], np.concatenate(np.expand_dims(o[1:half, ..., -1], -1), -1)], axis=-1)
-        left_half = np.expand_dims(left_half, axis=0)
-        left_half = np.concatenate([left_half] * half, axis=0)
-        right_half = np.concatenate([o[half], np.concatenate(np.expand_dims(o[half + 1:half * 2, ..., -1], -1), -1)],
-                                    axis=-1)
-        right_half = np.expand_dims(right_half, axis=0)
-        right_half = np.concatenate([right_half] * half, axis=0)
+        left_half = np.concatenate(
+            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:half, -3], axis=0)], axis=-1)] * half)
+        right_half = np.concatenate(
+            [np.concatenate([np.expand_dims(o[half][:-3], 0), np.expand_dims(o[half:, -3], axis=0)], axis=-1)] * half)
         share_o = np.concatenate([left_half, right_half], axis=0)
         return o, share_o, r, d, i
 
@@ -92,38 +85,35 @@ class TestEnv:
             stacked=False,
             write_goal_dumps=False, write_full_episode_dumps=False,
             dump_frequency=0,
-            number_of_left_players_agent_controls=4,
+            representation='simple115',
+            number_of_left_players_agent_controls=2,
             number_of_right_players_agent_controls=0,
-            channel_dimensions=(42, 42))
+        )
         return env
 
     def __init__(self, name):
         self.env = self.create_single_football_env(name)
         self.action_space = gym.spaces.Discrete(self.env.action_space.nvec[1])
-        self.num_agents = 4
+        self.num_agents = 2
         self.observation_space = gym.spaces.Box(
             low=self.env.observation_space.low[0],
             high=self.env.observation_space.high[0],
             dtype=self.env.observation_space.dtype)
-        share_obs_shape = np.array(self.observation_space.shape)
-        share_obs_shape[-1] = share_obs_shape[-1] + self.num_agents - 1
         self.share_observation_space = gym.spaces.Box(
-            low=np.zeros(share_obs_shape),
-            high=np.ones(share_obs_shape) * 255,
-            dtype=self.env.observation_space.dtype)
+            low=self.env.observation_space.low[0][:-1],
+            high=self.env.observation_space.high[0][:-1],
+            dtype=float)
 
     def reset(self):
         o = self.env.reset()
-        share_o = np.concatenate([o[0], np.concatenate(np.expand_dims(o[1:, ..., -1], -1), -1)], axis=-1)
-        share_o = np.expand_dims(share_o, axis=0)
-        share_o = np.concatenate([share_o] * self.num_agents, axis=0)
+        share_o = np.concatenate(
+            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:, -3], axis=0)], axis=-1)] * self.num_agents)
         return o, share_o
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
         o, r, d, i = self.env.step(action.reshape(self.num_agents, ))
-        share_o = np.concatenate([o[0], np.concatenate(np.expand_dims(o[1:, ..., -1], -1), -1)], axis=-1)
-        share_o = np.expand_dims(share_o, axis=0)
-        share_o = np.concatenate([share_o] * self.num_agents, axis=0)
+        share_o = np.concatenate(
+            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:, -3], axis=0)], axis=-1)] * self.num_agents)
         return o, share_o, r, d, i
 
     def close(self):
@@ -148,7 +138,13 @@ def get_env(args):
         return ShareSubprocVecEnv([get_env_fn(i) for i in range(args.n_rollout)])
 
 
-def get_eval_env(args):
+import copy
+
+
+def get_eval_env(arg):
+    args = copy.copy(arg)
+    args.rewards = 'scoring'
+
     def get_env_fn(rank):
         def init_env():
             env = FootballEnv(args)
@@ -175,4 +171,7 @@ def get_test_env(name=None):
 
         return init_env
 
-    return ShareDummyVecEnv([get_env_fn(i) for i in name])
+    if len(name) == 1:
+        return ShareDummyVecEnv([get_env_fn(name[0])])
+    else:
+        return ShareDummyVecEnv([get_env_fn(i) for i in name])

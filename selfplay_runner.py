@@ -36,7 +36,7 @@ class ShareRunner:
         self.save_interval = self.all_args.save_interval
         self.log_interval = self.all_args.log_interval
         self.test_interval = self.all_args.test_interval
-
+        self.test_episodes = self.all_args.test_episodes
         # eval
         self.use_eval = self.all_args.use_eval
         self.eval_interval = self.all_args.eval_interval
@@ -75,7 +75,7 @@ class ShareRunner:
             "Number of different opponents({}) must less than or equal to number of training threads({})!" \
                 .format(self.all_args.n_choose_opponents, self.n_rollout_threads)
 
-        self.policy_pool = {'latest': self.all_args.init_elo}  # type: dict[str, float]
+        self.policy_pool = {'0': self.all_args.init_elo}  # type: dict[str, float]
         self.opponent_policy = [
             Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
             for _ in range(self.all_args.n_choose_opponents)]
@@ -84,7 +84,7 @@ class ShareRunner:
         self.opponent_obs = np.zeros_like(self.buffer.obs[0])
         self.opponent_rnn_states = np.zeros_like(self.buffer.rnn_states_actor[0])
         self.opponent_masks = np.ones_like(self.buffer.masks[0])
-        self.num_opponents = self.all_args.num_opponents
+        self.max_policy_size = self.all_args.n_choose_opponents
 
         self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
                                            device=self.device)
@@ -103,7 +103,11 @@ class ShareRunner:
         if os.path.exists(str(self.save_dir) + '/elo.txt'):
             with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
                 self.policy_pool = json.load(file)
-            self.latest_elo = list(self.policy_pool.values())[-1]
+            keylist = []
+            for i in self.policy_pool.keys():
+                keylist.append(int(i))
+            keylist.sort()
+            self.latest_elo = self.policy_pool[str(keylist[-1])]
             self.reset_opponent()
 
     def train(self):
@@ -144,7 +148,7 @@ class ShareRunner:
             train_infos = self.train()
             # self.render()
             # post process
-            self.total_num_steps =episode* self.buffer_size * self.n_rollout_threads
+            self.total_num_steps = episode * self.buffer_size * self.n_rollout_threads
 
             # log information
             if episode % self.log_interval == 0:
@@ -157,10 +161,13 @@ class ShareRunner:
                                 self.num_env_steps,
                                 int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
-                train_infos["average_episode_rewards"] = self.buffer.rewards.sum() / (
+                train_infos["average_episode_rewards"] = self.buffer.rewards[:, :, :2, :].sum() / (
                         (self.buffer.masks == False).sum() + 1)
                 logging.info("average episode rewards is {}".format(train_infos["average_episode_rewards"]))
                 self.log_info(train_infos, self.total_num_steps)
+
+            if (episode % self.save_interval == 0) or (episode == episodes - 1):
+                self.save(episode)
 
             if episode % self.eval_interval == 0 and episode != 0 and self.use_eval:
                 self.eval(self.total_num_steps)
@@ -169,8 +176,6 @@ class ShareRunner:
                 self.test(self.total_num_steps)
 
             # save model
-            if (episode % self.save_interval == 0) or (episode == episodes - 1):
-                self.save(episode)
 
     def warmup(self):
         # reset env
@@ -259,8 +264,11 @@ class ShareRunner:
         opponent_cumulative_rewards = np.zeros_like(cumulative_rewards)
 
         # [Selfplay] Choose opponent policy for evaluation
-        eval_choose_opponents = [self.selfplay_algo.choose(self.policy_pool) for _ in range(self.num_opponents)]
-        eval_each_episodes = self.eval_episodes // self.num_opponents
+        if len(self.policy_pool.keys()) == self.max_policy_size:
+            eval_choose_opponents = list(self.policy_pool.keys())
+        else:
+            eval_choose_opponents = [self.selfplay_algo.choose(self.policy_pool) for _ in range(self.max_policy_size)]
+        eval_each_episodes = self.eval_episodes // self.max_policy_size
         logging.info(f" Choose opponents {eval_choose_opponents} for evaluation")
 
         eval_cur_opponent_idx = 0
@@ -290,14 +298,14 @@ class ShareRunner:
             # [Selfplay] get actions
             actions, rnn_states = self.policy.act(np.concatenate(obs),
                                                   np.concatenate(rnn_states),
-                                                  np.concatenate(masks), deterministic=True)
+                                                  np.concatenate(masks), deterministic=False)
             actions = np.array(np.split(_t2n(actions), self.n_eval_rollout_threads))
             rnn_states = np.array(np.split(_t2n(rnn_states), self.n_eval_rollout_threads))
 
             opponent_actions, opponent_rnn_states \
                 = self.eval_opponent_policy.act(np.concatenate(opponent_obs),
                                                 np.concatenate(opponent_rnn_states),
-                                                np.concatenate(opponent_masks), deterministic=True)
+                                                np.concatenate(opponent_masks), deterministic=False)
             opponent_rnn_states = np.array(np.split(_t2n(opponent_rnn_states), self.n_eval_rollout_threads))
             opponent_actions = np.array(np.split(_t2n(opponent_actions), self.n_eval_rollout_threads))
             actions = np.concatenate((actions, opponent_actions), axis=1)
@@ -337,35 +345,34 @@ class ShareRunner:
         # np.zeros((self.n_eval_rollout_threads, *self.buffer.rewards.shape[2:]), dtype=np.float32)
         episode_rewards = np.concatenate(episode_rewards)  # shape (self.eval_episodes, self.num_agents, 1)
         episode_rewards = episode_rewards.squeeze(-1).mean(axis=-1)  # shape: (self.eval_episodes,)
-        eval_average_episode_rewards = np.array(np.split(episode_rewards, self.num_opponents)).mean(
+        eval_average_episode_rewards = np.array(np.split(episode_rewards, self.max_policy_size)).mean(
             axis=-1)  # shape (self.num_opponents,)
 
         opponent_episode_rewards = np.concatenate(opponent_episode_rewards)
         opponent_episode_rewards = opponent_episode_rewards.squeeze(-1).mean(axis=-1)
-        opponent_average_episode_rewards = np.array(np.split(opponent_episode_rewards, self.num_opponents)).mean(
+        opponent_average_episode_rewards = np.array(np.split(opponent_episode_rewards, self.max_policy_size)).mean(
             axis=-1)
 
         # Update elo
-        ego_elo = np.array([self.latest_elo for _ in range(self.n_eval_rollout_threads)])
+        ego_elo = np.array([self.latest_elo for _ in range(self.max_policy_size)])
         opponent_elo = np.array([self.policy_pool[key] for key in eval_choose_opponents])
         expected_score = 1 / (1 + 10 ** ((ego_elo - opponent_elo) / 400))
 
         actual_score = np.zeros_like(expected_score)
         diff = opponent_average_episode_rewards - eval_average_episode_rewards
-        actual_score[diff > 2] = 1  # win
-        actual_score[abs(diff) < 2] = 0.5  # tie
-        actual_score[diff < -2] = 0  # lose
+        actual_score[diff >= 0.8] = 1  # win
+        actual_score[abs(diff) <= 0.8] = 0.5  # tie
+        actual_score[diff <= -0.8] = 0  # lose
         elo_gain = 32 * (actual_score - expected_score)
         update_opponent_elo = opponent_elo + elo_gain
         for i, key in enumerate(eval_choose_opponents):
             self.policy_pool[key] = update_opponent_elo[i]
         ego_elo = ego_elo - elo_gain
         self.latest_elo = ego_elo.mean()
-        self.policy_pool['latest'] = self.latest_elo
 
         eval_infos = {}
         eval_infos['eval_average_episode_rewards'] = eval_average_episode_rewards.mean()
-        eval_infos['latest_elo'] = self.latest_elo
+        # eval_infos['latest_elo'] = self.latest_elo
         logging.info(" eval average episode rewards: " + str(eval_infos['eval_average_episode_rewards']))
         logging.info(" latest elo score: " + str(self.latest_elo))
         self.log_info(eval_infos, total_num_steps, mode='eval')
@@ -383,24 +390,30 @@ class ShareRunner:
         masks = np.ones((self.n_test_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
         rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
                               dtype=np.float32)
-        step = 0
+
         rewards = np.zeros([self.n_test_rollout_threads, 1])
-        while step < 3001:
+        epo = 0
+        while epo < self.test_episodes:
             actions, rnn_states = self.policy.act(np.concatenate(obs),
                                                   np.concatenate(rnn_states),
-                                                  np.concatenate(masks), deterministic=True)
+                                                  np.concatenate(masks), deterministic=False)
             actions = np.array(np.split(_t2n(actions), self.n_test_rollout_threads))
             rnn_states = np.array(np.split(_t2n(rnn_states), self.n_test_rollout_threads))
-            obs, _, eval_rewards, _, eval_infos = self.test_envs.step(actions)
-
-            rewards = rewards + eval_rewards.sum(axis=-1, keepdims=True)
-            step += 1
+            obs, _, eval_rewards, done, eval_infos = self.test_envs.step(actions)
+            if done.all():
+                obs, _ = self.test_envs.reset()
+                masks = np.ones((self.n_test_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
+                rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
+                                      dtype=np.float32)
+                epo += 1
+            else:
+                rewards = rewards + eval_rewards.sum(axis=-1, keepdims=True)
         test_infos = {}
         for i in range(self.n_test_rollout_threads):
-            test_infos[f'reward_{i + 1}'] = rewards[i]
-        test_infos['reward_mean'] = rewards.mean()
-        logging.info(f'test reward is {rewards}\n')
+            test_infos[f'reward_{i + 1}'] = rewards[i] / self.test_episodes
+        test_infos['reward_mean'] = rewards.sum() / self.test_episodes / self.n_test_rollout_threads
         self.log_info(test_infos, total_num_steps, 'test')
+        logging.info("\nEnd test...")
 
     def save(self, episode):
         policy_actor_state_dict = self.policy.actor.state_dict()
@@ -409,7 +422,16 @@ class ShareRunner:
         torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
         # [Selfplay] save policy & performance
         torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
-        self.policy_pool[str(episode)] = self.latest_elo
+        if self.max_policy_size <= len(self.policy_pool.keys()):
+            if self.all_args.selfplay_algorithm == 'sp':
+                keylist = []
+                for i in self.policy_pool.keys():
+                    keylist .append(int(i))
+                keylist.sort()
+                del self.policy_pool[str(keylist[0])]
+                self.policy_pool[str(episode)] = self.latest_elo
+        else:
+            self.policy_pool[str(episode)] = self.latest_elo
 
     def reset_opponent(self):
         choose_opponents = []

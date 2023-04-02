@@ -7,19 +7,24 @@ from ..utils.act import ACTLayer
 from ..utils.utils import check
 from ..utils.conv import ConvBase
 
+
 class PPOActor(nn.Module):
     def __init__(self, args, obs_space, act_space, device=torch.device("cpu")):
         super(PPOActor, self).__init__()
         # network config
         self.gain = args.gain
+        self.obs_version = args.obs_version
+        self.hidden_size = args.hidden_size
         self.act_hidden_size = args.act_hidden_size
         self.activation_id = args.activation_id
         self.recurrent_hidden_size = args.recurrent_hidden_size
         self.recurrent_hidden_layers = args.recurrent_hidden_layers
         self.tpdv = dict(dtype=torch.float32, device=device)
         # (1) feature extraction module
-        self.base = ConvBase(observation_space=obs_space,output_size=256)
-        self.rnn = GRULayer(256, self.recurrent_hidden_size, self.recurrent_hidden_layers)
+        # self.base = ConvBase(observation_space=obs_space,output_size=256)
+        self.base = MLPBase(obs_space, self.hidden_size, self.activation_id, self.obs_version)
+        input_size = self.base.output_size
+        self.rnn = GRULayer(input_size, self.recurrent_hidden_size, self.recurrent_hidden_layers)
         input_size = self.rnn.output_size
         # (3) act module
         self.act = ACTLayer(act_space, input_size, self.act_hidden_size, self.activation_id, self.gain)
@@ -39,7 +44,6 @@ class PPOActor(nn.Module):
         rnn_states = check(rnn_states).to(**self.tpdv)
         action = check(action).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
-
 
         actor_features = self.base(obs)
 

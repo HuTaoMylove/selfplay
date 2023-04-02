@@ -10,7 +10,12 @@ import random
 import logging
 import numpy as np
 from pathlib import Path
+import copy
 
-e = get_test_env()
-o, so = e.reset()
-print(o)
+a=get_args()
+
+def change(a):
+    b=copy.copy(a)
+    b.rewards='asdfasdf'
+change(a)
+print(a.rewards)

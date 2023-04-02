@@ -219,7 +219,7 @@ class SharedReplayBuffer:
             next_value(np.ndarray): value predictions for the step after the last episode step.
         """
         self.value_preds[-1] = next_value
-        self.rewards = np.expand_dims(np.repeat(self.rewards.squeeze(-1).sum(-1, keepdims=True), self.num_agents, -1),
+        self.rewards = np.expand_dims(np.repeat(self.rewards.squeeze(-1).mean(-1, keepdims=True), self.num_agents, -1),
                                       -1)
         gae = 0
         for step in reversed(range(self.rewards.shape[0])):

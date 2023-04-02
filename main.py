@@ -10,6 +10,7 @@ import random
 import logging
 import numpy as np
 from pathlib import Path
+import copy
 
 if __name__ == '__main__':
 
@@ -25,10 +26,10 @@ if __name__ == '__main__':
     test_envs = get_test_env()
 
     run_dir = Path("./results") \
-              / all_args.env_name
+              / all_args.env_name / all_args.obs_version
     if not run_dir.exists():
         os.makedirs(str(run_dir))
-    log_dir = Path("./log") / all_args.env_name
+    log_dir = Path("./log") / all_args.env_name / all_args.obs_version
     if not log_dir.exists():
         os.makedirs(str(log_dir))
 
