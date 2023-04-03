@@ -430,6 +430,12 @@ class ShareRunner:
                 keylist.sort()
                 del self.policy_pool[str(keylist[0])]
                 self.policy_pool[str(episode)] = self.latest_elo
+            elif self.all_args.selfplay_algorithm == 'fsp':
+                keylist = []
+                for i in self.policy_pool.keys():
+                    keylist.append(i)
+                del self.policy_pool[keylist[np.random.choice(self.max_policy_size)]]
+                self.policy_pool[str(episode)] = self.latest_elo
         else:
             self.policy_pool[str(episode)] = self.latest_elo
 
