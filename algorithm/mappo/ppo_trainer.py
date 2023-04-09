@@ -13,6 +13,7 @@ class PPOTrainer():
         self.device = device
         self.tpdv = dict(dtype=torch.float32, device=device)
         # ppo config
+        self.args=args
         self.ppo_epoch = args.ppo_epoch
         self.clip_param = args.clip_param
         self.use_clipped_value_loss = args.use_clipped_value_loss
@@ -25,56 +26,117 @@ class PPOTrainer():
         self.data_chunk_length = args.data_chunk_length
 
     def ppo_update(self, policy: PPOPolicy, sample):
+        # p_obs_batch, p_share_obs_batch, p_actions_batch, p_masks_batch, \
+        # p_old_action_log_probs_batch, p_advantages_batch, p_returns_batch, p_value_preds_batch, \
+        # p_rnn_states_actor_batch, p_rnn_states_critic_batch=sample
 
-        obs_batch, share_obs_batch, actions_batch, masks_batch, old_action_log_probs_batch, advantages_batch, \
-        returns_batch, value_preds_batch, rnn_states_actor_batch, rnn_states_critic_batch = sample
 
-        old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
-        advantages_batch = check(advantages_batch).to(**self.tpdv)
-        returns_batch = check(returns_batch).to(**self.tpdv)
-        value_preds_batch = check(value_preds_batch).to(**self.tpdv)
 
-        # Reshape to do in a single forward pass for all steps
-        values, action_log_probs, dist_entropy = policy.evaluate_actions(share_obs_batch,
-                                                                         obs_batch,
-                                                                         rnn_states_actor_batch,
-                                                                         rnn_states_critic_batch,
-                                                                         actions_batch,
-                                                                         masks_batch)
+        # for  obs_batch, share_obs_batch, actions_batch, masks_batch, old_action_log_probs_batch, advantages_batch,\
+        #     returns_batch, value_preds_batch, rnn_states_actor_batch, rnn_states_critic_batch in zip(p_obs_batch, p_share_obs_batch, p_actions_batch, p_masks_batch, \
+        # p_old_action_log_probs_batch, p_advantages_batch, p_returns_batch, p_value_preds_batch, \
+        # p_rnn_states_actor_batch, p_rnn_states_critic_batch):
+        if not self.args.use_hierarchical_network:
+            obs_batch, share_obs_batch, actions_batch, masks_batch, old_action_log_probs_batch, advantages_batch, \
+            returns_batch, value_preds_batch, rnn_states_actor_batch, rnn_states_critic_batch = sample
+            old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
+            advantages_batch = check(advantages_batch).to(**self.tpdv)
+            returns_batch = check(returns_batch).to(**self.tpdv)
+            value_preds_batch = check(value_preds_batch).to(**self.tpdv)
+            values, action_log_probs, dist_entropy = policy.evaluate_actions(share_obs_batch,
+                                                                             obs_batch,
+                                                                             rnn_states_actor_batch,
+                                                                             rnn_states_critic_batch,
+                                                                             actions_batch,
+                                                                             masks_batch)
 
-        # Obtain the loss function
-        ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
-        surr1 = ratio * advantages_batch
-        surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * advantages_batch
-        policy_loss = torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True)
-        policy_loss = -policy_loss.mean()
+            # Obtain the loss function
+            ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
+            surr1 = ratio * advantages_batch
+            surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * advantages_batch
+            policy_loss = torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True)
+            policy_loss = -policy_loss.mean()
 
-        if self.use_clipped_value_loss:
-            value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
-                                                                                        self.clip_param)
-            value_losses = (values - returns_batch).pow(2)
-            value_losses_clipped = (value_pred_clipped - returns_batch).pow(2)
-            value_loss = 0.5 * torch.max(value_losses, value_losses_clipped)
+            if self.use_clipped_value_loss:
+                value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
+                                                                                            self.clip_param)
+                value_losses = (values - returns_batch).pow(2)
+                value_losses_clipped = (value_pred_clipped - returns_batch).pow(2)
+                value_loss = 0.5 * torch.max(value_losses, value_losses_clipped)
+            else:
+                value_loss = 0.5 * (returns_batch - values).pow(2)
+            value_loss = value_loss.mean()
+
+            policy_entropy_loss = -dist_entropy.mean()
+
+            loss = policy_loss + value_loss * self.value_loss_coef + policy_entropy_loss * self.entropy_coef
+
+            # Optimize the loss function
+            policy.optimizer.zero_grad()
+            loss.backward()
+            if self.use_max_grad_norm:
+                actor_grad_norm = nn.utils.clip_grad_norm_(policy.actor.parameters(), self.max_grad_norm).item()
+                critic_grad_norm = nn.utils.clip_grad_norm_(policy.critic.parameters(), self.max_grad_norm).item()
+            else:
+                actor_grad_norm = get_gard_norm(policy.actor.parameters())
+                critic_grad_norm = get_gard_norm(policy.critic.parameters())
+            policy.optimizer.step()
+
+            return policy_loss, value_loss, policy_entropy_loss, ratio, actor_grad_norm, critic_grad_norm
         else:
-            value_loss = 0.5 * (returns_batch - values).pow(2)
-        value_loss = value_loss.mean()
 
-        policy_entropy_loss = -dist_entropy.mean()
+            p_obs_batch, p_share_obs_batch, p_actions_batch, p_masks_batch, \
+            p_old_action_log_probs_batch, p_advantages_batch, p_returns_batch, p_value_preds_batch, \
+            p_rnn_states_actor_batch, p_rnn_states_critic_batch=sample
 
-        loss = policy_loss + value_loss * self.value_loss_coef + policy_entropy_loss * self.entropy_coef
+            for  obs_batch, share_obs_batch, actions_batch, masks_batch, old_action_log_probs_batch, advantages_batch,\
+                returns_batch, value_preds_batch, rnn_states_actor_batch, rnn_states_critic_batch,p in zip(p_obs_batch, p_share_obs_batch, p_actions_batch, p_masks_batch, \
+            p_old_action_log_probs_batch, p_advantages_batch, p_returns_batch, p_value_preds_batch, \
+            p_rnn_states_actor_batch, p_rnn_states_critic_batch,policy):
+                old_action_log_probs_batch = check(old_action_log_probs_batch).to(**self.tpdv)
+                advantages_batch = check(advantages_batch).to(**self.tpdv)
+                returns_batch = check(returns_batch).to(**self.tpdv)
+                value_preds_batch = check(value_preds_batch).to(**self.tpdv)
+                values, action_log_probs, dist_entropy = p.evaluate_actions(share_obs_batch,
+                                                                                 obs_batch,
+                                                                                 rnn_states_actor_batch,
+                                                                                 rnn_states_critic_batch,
+                                                                                 actions_batch,
+                                                                                 masks_batch)
 
-        # Optimize the loss function
-        policy.optimizer.zero_grad()
-        loss.backward()
-        if self.use_max_grad_norm:
-            actor_grad_norm = nn.utils.clip_grad_norm_(policy.actor.parameters(), self.max_grad_norm).item()
-            critic_grad_norm = nn.utils.clip_grad_norm_(policy.critic.parameters(), self.max_grad_norm).item()
-        else:
-            actor_grad_norm = get_gard_norm(policy.actor.parameters())
-            critic_grad_norm = get_gard_norm(policy.critic.parameters())
-        policy.optimizer.step()
+                # Obtain the loss function
+                ratio = torch.exp(action_log_probs - old_action_log_probs_batch)
+                surr1 = ratio * advantages_batch
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * advantages_batch
+                policy_loss = torch.sum(torch.min(surr1, surr2), dim=-1, keepdim=True)
+                policy_loss = -policy_loss.mean()
 
-        return policy_loss, value_loss, policy_entropy_loss, ratio, actor_grad_norm, critic_grad_norm
+                if self.use_clipped_value_loss:
+                    value_pred_clipped = value_preds_batch + (values - value_preds_batch).clamp(-self.clip_param,
+                                                                                                self.clip_param)
+                    value_losses = (values - returns_batch).pow(2)
+                    value_losses_clipped = (value_pred_clipped - returns_batch).pow(2)
+                    value_loss = 0.5 * torch.max(value_losses, value_losses_clipped)
+                else:
+                    value_loss = 0.5 * (returns_batch - values).pow(2)
+                value_loss = value_loss.mean()
+
+                policy_entropy_loss = -dist_entropy.mean()
+
+                loss = policy_loss + value_loss * self.value_loss_coef + policy_entropy_loss * self.entropy_coef
+
+                # Optimize the loss function
+                p.optimizer.zero_grad()
+                loss.backward()
+                if self.use_max_grad_norm:
+                    actor_grad_norm = nn.utils.clip_grad_norm_(p.actor.parameters(), self.max_grad_norm).item()
+                    critic_grad_norm = nn.utils.clip_grad_norm_(p.critic.parameters(), self.max_grad_norm).item()
+                else:
+                    actor_grad_norm = get_gard_norm(p.actor.parameters())
+                    critic_grad_norm = get_gard_norm(p.critic.parameters())
+                p.optimizer.step()
+
+            return policy_loss, value_loss, policy_entropy_loss, ratio, actor_grad_norm, critic_grad_norm
 
     def train(self, policy: PPOPolicy, buffer: SharedReplayBuffer):
         train_info = {}

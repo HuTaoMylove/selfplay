@@ -22,7 +22,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(all_args.seed)
 
     envs = get_env(all_args)
-    eval_envs = get_eval_env(all_args) if all_args.use_eval else None
+    eval_envs = get_eval_env(all_args) if all_args.use_eval and not all_args.use_hierarchical_network else None
     test_envs = get_test_env()
 
     run_dir = Path("./results") \

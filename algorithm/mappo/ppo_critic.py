@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
-
+import gym
 from ..utils.mlp import MLPBase, MLPLayer
 from ..utils.gru import GRULayer
 from ..utils.utils import check
 from ..utils.conv import ConvBase
-
+import numpy as np
 
 class PPOCritic(nn.Module):
     def __init__(self, args, obs_space, device=torch.device("cpu")):

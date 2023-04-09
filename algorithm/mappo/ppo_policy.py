@@ -5,12 +5,11 @@ from .ppo_critic import PPOCritic
 
 class PPOPolicy:
     def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu")):
-
         self.args = args
         self.device = device
         # optimizer config
         self.lr = args.lr
-        
+
         self.obs_space = obs_space
         self.cent_obs_space = cent_obs_space
         self.act_space = act_space
@@ -40,14 +39,20 @@ class PPOPolicy:
         values, _ = self.critic(cent_obs, rnn_states_critic, masks)
         return values
 
-    def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, action, masks):
+    def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, action, masks , return_rnn=False):
         """
         Returns:
             values, action_log_probs, dist_entropy
         """
-        action_log_probs, dist_entropy = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks)
-        values, _ = self.critic(cent_obs, rnn_states_critic, masks)
-        return values, action_log_probs, dist_entropy
+        if return_rnn == False:
+            action_log_probs, dist_entropy = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks)
+            values, _ = self.critic(cent_obs, rnn_states_critic, masks)
+            return values, action_log_probs, dist_entropy
+        else:
+            action_log_probs, dist_entropy, n_rnn_states_actor = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks,True)
+            values, n_rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
+            return values, action_log_probs, dist_entropy, n_rnn_states_actor, n_rnn_states_critic
+
 
     def act(self, obs, rnn_states_actor, masks, deterministic=False):
         """

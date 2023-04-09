@@ -6,7 +6,7 @@ import numpy as np
 from gym import spaces
 from typing import List
 from torch.utils.tensorboard import SummaryWriter
-from algorithm.utils.buffer import SharedReplayBuffer
+from algorithm.utils.buffer import SharedReplayBuffer, HierSharedReplayBuffer
 import os
 import json
 
@@ -16,6 +16,30 @@ def _t2n(x):
 
 
 class ShareRunner:
+    def hierarchical_network(self, all_args):
+        class Args:
+            def __init__(self, obs_version='v1', hidden_size='48 48', act_hidden_size='48 48',
+                         recurrent_hidden_size=48) -> None:
+                self.gain = 0.01
+                self.hidden_size = hidden_size
+                self.act_hidden_size = act_hidden_size
+                self.activation_id = 1
+                self.use_feature_normalization = False
+                self.use_recurrent_policy = True
+                self.recurrent_hidden_size = recurrent_hidden_size
+                self.recurrent_hidden_layers = 1
+                self.tpdv = dict(dtype=torch.float32, device=torch.device('cpu'))
+                self.use_prior = False
+                self.lr = 0.001
+                self.obs_version = obs_version
+                self.use_hierarchical_network = all_args.use_hierarchical_network
+
+        self.v1 = Args()
+        self.v2 = Args('v2', '64 64', '64 64', 64)
+        self.v3 = Args('v3', '72 72', '72 72', 72)
+        self.v4 = Args('v4', '96 96', '96 96', 96)
+        self.v5 = Args('v5', '128 128', '128 128', 128)
+
     def __init__(self, config):
 
         self.all_args = config['all_args']
@@ -57,16 +81,30 @@ class ShareRunner:
         self.share_obs_space = self.envs.share_observation_space
         self.act_space = self.envs.action_space
         self.num_agents = self.envs.num_agents
+        self.use_hierarchical = self.all_args.use_hierarchical_network
         # policy & algorithm
 
         from algorithm.mappo.ppo_trainer import PPOTrainer as Trainer
         from algorithm.mappo.ppo_policy import PPOPolicy as Policy
 
-        self.policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
-        self.trainer = Trainer(self.all_args, device=self.device)
-        self.buffer = SharedReplayBuffer(self.all_args, self.num_agents // 2, self.obs_space, self.share_obs_space,
-                                         self.act_space)
+        if not self.use_hierarchical:
+            self.policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
+                                 device=self.device)
+        else:
+            self.hierarchical_network(self.all_args)
+            self.policy = [Policy(i, self.obs_space, self.share_obs_space, self.act_space,
+                                  device=self.device) for i in [self.v1, self.v2, self.v3, self.v4, self.v5]]
+            self.prob = np.array([1, 0, 0, 0, 0],dtype=float)
+            self.delta = np.array([0.01, 0.015, 0.02, 0.025, 0.06])
 
+        self.trainer = Trainer(self.all_args, device=self.device)
+        if self.use_hierarchical:
+            self.buffer = HierSharedReplayBuffer(self.all_args, self.num_agents // 2, self.obs_space,
+                                                 self.share_obs_space,
+                                                 self.act_space)
+        else:
+            self.buffer = SharedReplayBuffer(self.all_args, self.num_agents // 2, self.obs_space, self.share_obs_space,
+                                             self.act_space)
         # [Selfplay] allocate memory for opponent policy/data in training
         from algorithm.utils.selfplay import get_algorithm
         self.selfplay_algo = get_algorithm(self.all_args.selfplay_algorithm)
@@ -76,18 +114,27 @@ class ShareRunner:
                 .format(self.all_args.n_choose_opponents, self.n_rollout_threads)
 
         self.policy_pool = {'0': self.all_args.init_elo}  # type: dict[str, float]
-        self.opponent_policy = [
-            Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
-            for _ in range(self.all_args.n_choose_opponents)]
+
+        if self.use_hierarchical:
+            self.opponent_policy = self.policy.copy()
+        else:
+            self.opponent_policy = [
+                Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
+                for _ in range(self.all_args.n_choose_opponents)]
         self.opponent_env_split = np.array_split(np.arange(self.n_rollout_threads), len(self.opponent_policy))
 
         self.opponent_obs = np.zeros_like(self.buffer.obs[0])
-        self.opponent_rnn_states = np.zeros_like(self.buffer.rnn_states_actor[0])
+        if self.use_hierarchical:
+            self.opponent_rnn_states = [np.zeros_like(i[0, :self.n_rollout_threads // self.all_args.n_choose_opponents])
+                                        for i in self.buffer.rnn_states_actor]
+        else:
+            self.opponent_rnn_states = np.zeros_like(self.buffer.rnn_states_actor[0])
         self.opponent_masks = np.ones_like(self.buffer.masks[0])
         self.max_policy_size = self.all_args.n_choose_opponents
 
-        self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
-                                           device=self.device)
+        if self.all_args.use_eval and not self.all_args.use_hierarchical_network:
+            self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
+                                               device=self.device)
 
         if len(os.listdir(self.save_dir)) > 0:
             self.restore()
@@ -96,22 +143,34 @@ class ShareRunner:
                      .format(self.all_args.selfplay_algorithm, self.all_args.n_choose_opponents))
 
     def restore(self):
-        policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
-        self.policy.actor.load_state_dict(policy_actor_state_dict)
-        policy_critic_state_dict = torch.load(str(self.save_dir) + '/critic_latest.pt')
-        self.policy.critic.load_state_dict(policy_critic_state_dict)
-        if os.path.exists(str(self.save_dir) + '/elo.txt'):
-            with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
-                self.policy_pool = json.load(file)
-            keylist = []
-            for i in self.policy_pool.keys():
-                keylist.append(int(i))
-            keylist.sort()
-            self.latest_elo = self.policy_pool[str(keylist[-1])]
-            self.reset_opponent()
+        if self.use_hierarchical:
+            for p, op in zip(self.policy, self.opponent_policy):
+                policy_actor_state_dict = torch.load(str(self.save_dir) + f'/actor_{p.args.obs_version}_latest.pt')
+                p.actor.load_state_dict(policy_actor_state_dict)
+                policy_critic_state_dict = torch.load(str(self.save_dir) + f'/critic_{p.args.obs_version}_latest.pt')
+                p.critic.load_state_dict(policy_critic_state_dict)
+                op.actor.load_state_dict(policy_actor_state_dict)
+        else:
+            policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
+            self.policy.actor.load_state_dict(policy_actor_state_dict)
+            policy_critic_state_dict = torch.load(str(self.save_dir) + '/critic_latest.pt')
+            self.policy.critic.load_state_dict(policy_critic_state_dict)
+            if os.path.exists(str(self.save_dir) + '/elo.txt'):
+                with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
+                    self.policy_pool = json.load(file)
+                keylist = []
+                for i in self.policy_pool.keys():
+                    keylist.append(int(i))
+                keylist.sort()
+                self.latest_elo = self.policy_pool[str(keylist[-1])]
+                self.reset_opponent()
 
     def train(self):
-        self.policy.prep_training()
+        if self.all_args.use_hierarchical_network:
+            for i in range(5):
+                self.policy[i].prep_training()
+        else:
+            self.policy.prep_training()
         train_infos = self.trainer.train(self.policy, self.buffer)
         self.buffer.after_update()
         return train_infos
@@ -124,10 +183,8 @@ class ShareRunner:
         already_trained_episodes = -1
         if len(os.listdir(str(self.log_dir))) > 1:
             from tensorboard.backend.event_processing import event_accumulator
-            # ea = event_accumulator.EventAccumulator(str(self.log_dir / str(self.model_dir).split('\\')[-1]))
             ea = event_accumulator.EventAccumulator(str(self.log_dir))
             ea.Reload()
-            # assert len(ea.scalars.Keys()) != 0, 'log data should not none!'
             already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards'))
             logging.info(f'already trained {already_trained_episodes} episodes')
 
@@ -146,6 +203,7 @@ class ShareRunner:
             # compute return and update network
             self.compute()
             train_infos = self.train()
+            self.prob += self.delta
             # self.render()
             # post process
             self.total_num_steps = episode * self.buffer_size * self.n_rollout_threads
@@ -170,7 +228,11 @@ class ShareRunner:
                 self.save(episode)
 
             if episode % self.eval_interval == 0 and episode != 0 and self.use_eval:
-                self.eval(self.total_num_steps)
+                if self.use_hierarchical:
+                    for p, op in zip(self.policy, self.opponent_policy):
+                        op.actor.load_state_dict(p.actor.state_dict())
+                else:
+                    self.eval(self.total_num_steps)
 
             if episode % self.test_interval == 0 and episode != 0:
                 self.test(self.total_num_steps)
@@ -189,41 +251,93 @@ class ShareRunner:
 
     @torch.no_grad()
     def collect(self, step):
-        self.policy.prep_rollout()
-        values, actions, action_log_probs, rnn_states_actor, rnn_states_critic \
-            = self.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
-                                      np.concatenate(self.buffer.obs[step]),
-                                      np.concatenate(self.buffer.rnn_states_actor[step]),
-                                      np.concatenate(self.buffer.rnn_states_critic[step]),
-                                      np.concatenate(self.buffer.masks[step]))
-        # split parallel data [N*M, shape] => [N, M, shape]
-        values = np.array(np.split(_t2n(values), self.n_rollout_threads))
-        actions = np.array(np.split(_t2n(actions), self.n_rollout_threads))
-        action_log_probs = np.array(np.split(_t2n(action_log_probs), self.n_rollout_threads))
-        rnn_states_actor = np.array(np.split(_t2n(rnn_states_actor), self.n_rollout_threads))
-        rnn_states_critic = np.array(np.split(_t2n(rnn_states_critic), self.n_rollout_threads))
+        if self.all_args.use_hierarchical_network:
+            values = []
+            action_log_probs = []
+            rnn_states_actor, rnn_states_critic = [], []
+            chose_idx = int(np.random.choice(len(self.policy), 1, p=(self.prob / self.prob.sum()).tolist()))
+            _, actions, _, _, _ \
+                = self.policy[chose_idx].get_actions(np.concatenate(self.buffer.share_obs[step]),
+                                                     np.concatenate(self.buffer.obs[step]),
+                                                     np.concatenate(self.buffer.rnn_states_actor[chose_idx][step]),
+                                                     np.concatenate(self.buffer.rnn_states_critic[chose_idx][step]),
+                                                     np.concatenate(self.buffer.masks[step]))
+
+            for i, p in enumerate(self.policy):
+                v, ap, _, ra, rc \
+                    = p.evaluate_actions(np.concatenate(self.buffer.share_obs[step]),
+                                         np.concatenate(self.buffer.obs[step]),
+                                         np.concatenate(self.buffer.rnn_states_actor[i][step]),
+                                         np.concatenate(self.buffer.rnn_states_critic[i][step]),
+                                         actions,
+                                         np.concatenate(self.buffer.masks[step]),
+                                         True)
+                v = np.array(np.split(_t2n(v), self.n_rollout_threads))
+                ap = np.array(np.split(_t2n(ap), self.n_rollout_threads))
+                ra = np.array(np.split(_t2n(ra), self.n_rollout_threads))
+                rc = np.array(np.split(_t2n(rc), self.n_rollout_threads))
+                values.append(v)
+                action_log_probs.append(ap)
+                rnn_states_actor.append(ra)
+                rnn_states_critic.append(rc)
+            actions = np.array(np.split(_t2n(actions), self.n_rollout_threads))
+
+        else:
+            self.policy.prep_rollout()
+
+            values, actions, action_log_probs, rnn_states_actor, rnn_states_critic \
+                = self.policy.get_actions(np.concatenate(self.buffer.share_obs[step]),
+                                          np.concatenate(self.buffer.obs[step]),
+                                          np.concatenate(self.buffer.rnn_states_actor[step]),
+                                          np.concatenate(self.buffer.rnn_states_critic[step]),
+                                          np.concatenate(self.buffer.masks[step]))
+            # split parallel data [N*M, shape] => [N, M, shape]
+            values = np.array(np.split(_t2n(values), self.n_rollout_threads))
+            actions = np.array(np.split(_t2n(actions), self.n_rollout_threads))
+            action_log_probs = np.array(np.split(_t2n(action_log_probs), self.n_rollout_threads))
+            rnn_states_actor = np.array(np.split(_t2n(rnn_states_actor), self.n_rollout_threads))
+            rnn_states_critic = np.array(np.split(_t2n(rnn_states_critic), self.n_rollout_threads))
 
         # [Selfplay] get actions of opponent policy
         opponent_actions = np.zeros_like(actions)
         for policy_idx, policy in enumerate(self.opponent_policy):
             env_idx = self.opponent_env_split[policy_idx]
-            opponent_action, opponent_rnn_states \
-                = policy.act(np.concatenate(self.opponent_obs[env_idx]),
-                             np.concatenate(self.opponent_rnn_states[env_idx]),
-                             np.concatenate(self.opponent_masks[env_idx]))
+            if self.use_hierarchical:
+                opponent_action, opponent_rnn_states \
+                    = policy.act(np.concatenate(self.opponent_obs[env_idx]),
+                                 np.concatenate(self.opponent_rnn_states[policy_idx]),
+                                 np.concatenate(self.opponent_masks[env_idx]))
+                self.opponent_rnn_states[policy_idx] = np.array(np.split(_t2n(opponent_rnn_states),
+                                                                         self.n_rollout_threads // self.all_args.n_choose_opponents))
+            else:
+                opponent_action, opponent_rnn_states \
+                    = policy.act(np.concatenate(self.opponent_obs[env_idx]),
+                                 np.concatenate(self.opponent_rnn_states[env_idx]),
+                                 np.concatenate(self.opponent_masks[env_idx]))
+                self.opponent_rnn_states[env_idx] = np.array(np.split(_t2n(opponent_rnn_states), len(env_idx)))
+
             opponent_actions[env_idx] = np.array(np.split(_t2n(opponent_action), len(env_idx)))
-            self.opponent_rnn_states[env_idx] = np.array(np.split(_t2n(opponent_rnn_states), len(env_idx)))
+
         actions = np.concatenate((actions, opponent_actions), axis=1)
 
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
 
     @torch.no_grad()
     def compute(self):
-        self.policy.prep_rollout()
-        next_values = self.policy.get_values(np.concatenate(self.buffer.share_obs[-1]),
-                                             np.concatenate(self.buffer.rnn_states_critic[-1]),
-                                             np.concatenate(self.buffer.masks[-1]))
-        next_values = np.array(np.split(_t2n(next_values), self.buffer.n_rollout_threads))
+        if self.use_hierarchical:
+            next_values = []
+            for i in range(5):
+                v = self.policy[i].get_values(np.concatenate(self.buffer.share_obs[-1]),
+                                              np.concatenate(self.buffer.rnn_states_critic[i][-1]),
+                                              np.concatenate(self.buffer.masks[-1]))
+                v = np.array(np.split(_t2n(v), self.n_rollout_threads))
+                next_values.append(v)
+        else:
+            next_values = self.policy.get_values(np.concatenate(self.buffer.share_obs[-1]),
+                                                 np.concatenate(self.buffer.rnn_states_critic[-1]),
+                                                 np.concatenate(self.buffer.masks[-1]))
+            next_values = np.array(np.split(_t2n(next_values), self.buffer.n_rollout_threads))
+
         self.buffer.compute_returns(next_values)
 
     def insert(self, data: List[np.ndarray]):
@@ -232,15 +346,19 @@ class ShareRunner:
         dones = np.ones([self.n_rollout_threads, self.num_agents]) * dones.reshape(-1, 1)
         dones_env = np.all(dones, axis=-1)
 
-        rnn_states_actor[dones_env == True] = np.zeros(((dones_env == True).sum(), *rnn_states_actor.shape[1:]),
-                                                       dtype=np.float32)
-        rnn_states_critic[dones_env == True] = np.zeros(((dones_env == True).sum(), *rnn_states_critic.shape[1:]),
-                                                        dtype=np.float32)
+        if self.use_hierarchical:
+            for i in dones_env:
+                if i == True:
+                    rnn_states_actor[i] = np.zeros_like(rnn_states_actor[i])
+                    rnn_states_critic[i] = np.zeros_like(rnn_states_critic[i])
+        else:
+            rnn_states_actor[dones_env == True] = np.zeros(((dones_env == True).sum(), *rnn_states_actor.shape[1:]),
+                                                           dtype=np.float32)
+            rnn_states_critic[dones_env == True] = np.zeros(((dones_env == True).sum(), *rnn_states_critic.shape[1:]),
+                                                            dtype=np.float32)
 
         masks = np.ones((self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
         masks[dones_env == True] = np.zeros(((dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
-
-        # [Selfplay] divide ego/opponent of collecting data TODO: shared_obs
 
         self.opponent_obs = obs[:, self.num_agents // 2:, ...]
         self.opponent_masks = masks[:, self.num_agents // 2:, ...]
@@ -383,28 +501,40 @@ class ShareRunner:
             file.close()
         self.reset_opponent()
 
+    @torch.no_grad()
     def test(self, total_num_steps):
         logging.info("\nStart test...")
-        self.policy.prep_rollout()
+
+        # self.policy.prep_rollout()
         obs, _ = self.test_envs.reset()
         masks = np.ones((self.n_test_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
-        rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
-                              dtype=np.float32)
+        if self.use_hierarchical:
+            rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor[-1].shape[2:]),
+                                  dtype=np.float32)
+        else:
+            rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
+                                  dtype=np.float32)
 
         rewards = np.zeros([self.n_test_rollout_threads, 1])
         epo = 0
         while epo < self.test_episodes:
-            actions, rnn_states = self.policy.act(np.concatenate(obs),
-                                                  np.concatenate(rnn_states),
-                                                  np.concatenate(masks), deterministic=False)
+            if self.use_hierarchical:
+                actions, rnn_states = self.policy[-1].act(np.concatenate(obs),
+                                                          np.concatenate(rnn_states),
+                                                          np.concatenate(masks), deterministic=False)
+            else:
+                actions, rnn_states = self.policy.act(np.concatenate(obs),
+                                                      np.concatenate(rnn_states),
+                                                      np.concatenate(masks), deterministic=False)
             actions = np.array(np.split(_t2n(actions), self.n_test_rollout_threads))
             rnn_states = np.array(np.split(_t2n(rnn_states), self.n_test_rollout_threads))
             obs, _, eval_rewards, done, eval_infos = self.test_envs.step(actions)
             if done.all():
                 obs, _ = self.test_envs.reset()
                 masks = np.ones((self.n_test_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
-                rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
-                                      dtype=np.float32)
+                # rnn_states = np.zeros((self.n_test_rollout_threads, *self.buffer.rnn_states_actor.shape[2:]),
+                #                       dtype=np.float32)
+                rnn_states = np.zeros_like(rnn_states)
                 epo += 1
             else:
                 rewards = rewards + eval_rewards.sum(axis=-1, keepdims=True)
@@ -416,27 +546,49 @@ class ShareRunner:
         logging.info("\nEnd test...")
 
     def save(self, episode):
-        policy_actor_state_dict = self.policy.actor.state_dict()
-        torch.save(policy_actor_state_dict, str(self.save_dir) + '/actor_latest.pt')
-        policy_critic_state_dict = self.policy.critic.state_dict()
-        torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
-        # [Selfplay] save policy & performance
-        torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
-        if self.max_policy_size <= len(self.policy_pool.keys()):
-            if self.all_args.selfplay_algorithm == 'sp':
-                keylist = []
-                for i in self.policy_pool.keys():
-                    keylist .append(int(i))
-                keylist.sort()
-                del self.policy_pool[str(keylist[0])]
-                self.policy_pool[str(episode)] = self.latest_elo
-            elif self.all_args.selfplay_algorithm == 'fsp':
-                keylist = []
-                for i in self.policy_pool.keys():
-                    keylist.append(i)
-                del self.policy_pool[keylist[np.random.choice(self.max_policy_size)]]
-                self.policy_pool[str(episode)] = self.latest_elo
+        if self.all_args.use_hierarchical_network:
+            for p in self.policy:
+                policy_actor_state_dict = p.actor.state_dict()
+                torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{p.args.obs_version}_latest.pt')
+                policy_critic_state_dict = p.critic.state_dict()
+                torch.save(policy_critic_state_dict, str(self.save_dir) + f'/critic_{p.args.obs_version}_latest.pt')
+            self.buffer.clear()
+            self.opponent_obs = np.zeros_like(self.opponent_obs)
+            self.opponent_rnn_states = [np.zeros_like(i) for i in self.opponent_rnn_states]
+            self.opponent_masks = np.ones_like(self.opponent_masks)
+
+            # reset env
+            obs, share_obs = self.envs.reset()
+            if self.all_args.n_choose_opponents > 0:
+                self.opponent_obs = obs[:, self.num_agents // 2:, ...]
+                obs = obs[:, :self.num_agents // 2, ...]
+                share_obs = share_obs[:, :self.num_agents // 2, ...]
+            self.buffer.obs[0] = obs.copy()
+            self.buffer.share_obs[0] = share_obs.copy()
+
         else:
+            policy_actor_state_dict = self.policy.actor.state_dict()
+            torch.save(policy_actor_state_dict, str(self.save_dir) + '/actor_latest.pt')
+            policy_critic_state_dict = self.policy.critic.state_dict()
+            torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
+            # [Selfplay] save policy & performance
+            torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
+            if self.max_policy_size <= len(self.policy_pool.keys()):
+                if self.all_args.selfplay_algorithm == 'sp':
+                    keylist = []
+                    for i in self.policy_pool.keys():
+                        keylist.append(int(i))
+                    keylist.sort()
+                    del self.policy_pool[str(keylist[0])]
+                elif self.all_args.selfplay_algorithm == 'fsp':
+                    keylist = list(self.policy_pool.keys())
+                    del self.policy_pool[np.random.choice(keylist, 1).item()]
+                elif self.all_args.selfplay_algorithm == 'pfsp':
+                    history_elo = np.array(list(self.policy_pool.values()))
+                    prob = 1 - history_elo / history_elo.sum()
+                    prob = prob / prob.sum()
+                    choose_key = np.random.choice(a=list(self.policy_pool.keys()), size=1, p=prob).item()
+                    del self.policy_pool[choose_key]
             self.policy_pool[str(episode)] = self.latest_elo
 
     def reset_opponent(self):

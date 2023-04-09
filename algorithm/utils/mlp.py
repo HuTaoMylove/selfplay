@@ -32,7 +32,7 @@ class MLPLayer(nn.Module):
 
 # Feature extraction module
 class MLPBase(nn.Module):
-    def __init__(self, obs_space, hidden_size, activation_id, obs_version='v0'):
+    def __init__(self, obs_space, hidden_size, activation_id):
         super(MLPBase, self).__init__()
         self._hidden_size = hidden_size
         self._activation_id = activation_id
@@ -42,6 +42,7 @@ class MLPBase(nn.Module):
         self.mlp = MLPLayer(input_dim, self._hidden_size, self._activation_id)
 
     def forward(self, x: torch.Tensor):
+
         x = self.mlp(x)
         return x
 
