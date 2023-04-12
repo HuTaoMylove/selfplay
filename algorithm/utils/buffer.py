@@ -478,13 +478,13 @@ class HierSharedReplayBuffer:
             next_value(np.ndarray): value predictions for the step after the last episode step.
         """
         for i in range(5):
-            self.value_preds[i][-1] = next_value[i]
+            self.value_preds[i][-1] = next_value[i].copy()
         self.rewards = np.expand_dims(np.repeat(self.rewards.squeeze(-1).mean(-1, keepdims=True), self.num_agents, -1),
                                       -1)
-        gae = 0
+        gae = [0]*5
         for step in reversed(range(self.rewards.shape[0])):
             for i in range(5):
                 td_delta = self.rewards[step] + self.gamma * self.value_preds[i][step + 1] * self.masks[step + 1] - \
                            self.value_preds[i][step]
-                gae = td_delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae
-                self.returns[i][step] = gae + self.value_preds[i][step]
+                gae[i] = td_delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae[i]
+                self.returns[i][step] = gae[i] + self.value_preds[i][step]
