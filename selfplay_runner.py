@@ -90,12 +90,13 @@ class ShareRunner:
         if not self.use_hierarchical:
             self.policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
                                  device=self.device)
+            self.prob = None
         else:
             self.hierarchical_network(self.all_args)
             self.policy = [Policy(i, self.obs_space, self.share_obs_space, self.act_space,
                                   device=self.device) for i in [self.v1, self.v2, self.v3, self.v4, self.v5]]
-            self.prob = np.array([1, 0, 0, 0, 0],dtype=float)
-            self.delta = np.array([0.01, 0.015, 0.02, 0.025, 0.06])
+            self.prob = np.array([1, 0.8, 0.6, 0.4, 0.2], dtype=float)
+            self.delta = np.array([0.0025, 0.005, 0.0075, 0.01, 0.02])
 
         self.trainer = Trainer(self.all_args, device=self.device)
         if self.use_hierarchical:
@@ -116,7 +117,8 @@ class ShareRunner:
         self.policy_pool = {'0': self.all_args.init_elo}  # type: dict[str, float]
 
         if self.use_hierarchical:
-            self.opponent_policy = self.policy.copy()
+            self.opponent_policy = [Policy(i, self.obs_space, self.share_obs_space, self.act_space,
+                                           device=self.device) for i in [self.v1, self.v2, self.v3, self.v4, self.v5]]
         else:
             self.opponent_policy = [
                 Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space, device=self.device)
@@ -144,12 +146,14 @@ class ShareRunner:
 
     def restore(self):
         if self.use_hierarchical:
-            for p, op in zip(self.policy, self.opponent_policy):
-                policy_actor_state_dict = torch.load(str(self.save_dir) + f'/actor_{p.args.obs_version}_latest.pt')
-                p.actor.load_state_dict(policy_actor_state_dict)
-                policy_critic_state_dict = torch.load(str(self.save_dir) + f'/critic_{p.args.obs_version}_latest.pt')
-                p.critic.load_state_dict(policy_critic_state_dict)
-                op.actor.load_state_dict(policy_actor_state_dict)
+            for i in range(len(self.policy)):
+                policy_actor_state_dict = torch.load(
+                    str(self.save_dir) + f'/actor_{self.policy[i].args.obs_version}_latest.pt')
+                self.policy[i].actor.load_state_dict(policy_actor_state_dict)
+                policy_critic_state_dict = torch.load(
+                    str(self.save_dir) + f'/critic_{self.policy[i].args.obs_version}_latest.pt')
+                self.policy[i].critic.load_state_dict(policy_critic_state_dict)
+                self.opponent_policy[i].actor.load_state_dict(policy_actor_state_dict)
         else:
             policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
             self.policy.actor.load_state_dict(policy_actor_state_dict)
@@ -171,7 +175,7 @@ class ShareRunner:
                 self.policy[i].prep_training()
         else:
             self.policy.prep_training()
-        train_infos = self.trainer.train(self.policy, self.buffer)
+        train_infos = self.trainer.train(self.policy, self.buffer, self.prob)
         self.buffer.after_update()
         return train_infos
 
@@ -187,6 +191,8 @@ class ShareRunner:
             ea.Reload()
             already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards'))
             logging.info(f'already trained {already_trained_episodes} episodes')
+            if self.use_hierarchical:
+                self.prob += self.delta * already_trained_episodes
 
         for episode in range(already_trained_episodes + 1, episodes):
             start = time.time()
@@ -203,7 +209,8 @@ class ShareRunner:
             # compute return and update network
             self.compute()
             train_infos = self.train()
-            self.prob += self.delta
+            if self.use_hierarchical:
+                self.prob += self.delta
             # self.render()
             # post process
             self.total_num_steps = episode * self.buffer_size * self.n_rollout_threads
@@ -256,7 +263,8 @@ class ShareRunner:
             action_log_probs = []
             rnn_states_actor, rnn_states_critic = [], []
             chose_idx = int(np.random.choice(len(self.policy), 1, p=(self.prob / self.prob.sum()).tolist()))
-            _, actions, _, _, _ \
+            # chose_idx = np.argmax(self.prob)
+            _, actions, AP, _, _ \
                 = self.policy[chose_idx].get_actions(np.concatenate(self.buffer.share_obs[step]),
                                                      np.concatenate(self.buffer.obs[step]),
                                                      np.concatenate(self.buffer.rnn_states_actor[chose_idx][step]),
@@ -347,10 +355,9 @@ class ShareRunner:
         dones_env = np.all(dones, axis=-1)
 
         if self.use_hierarchical:
-            for i in dones_env:
-                if i == True:
-                    rnn_states_actor[i] = np.zeros_like(rnn_states_actor[i])
-                    rnn_states_critic[i] = np.zeros_like(rnn_states_critic[i])
+            if dones_env[0]:
+                rnn_states_actor = [np.zeros_like(i) for i in rnn_states_actor]
+                rnn_states_critic = [np.zeros_like(i) for i in rnn_states_critic]
         else:
             rnn_states_actor[dones_env == True] = np.zeros(((dones_env == True).sum(), *rnn_states_actor.shape[1:]),
                                                            dtype=np.float32)

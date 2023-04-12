@@ -3,9 +3,10 @@ import torch.nn as nn
 import gym
 from ..utils.mlp import MLPBase, MLPLayer
 from ..utils.gru import GRULayer
-from ..utils.utils import check
+from ..utils.utils import check, init
 from ..utils.conv import ConvBase
 import numpy as np
+
 
 class PPOCritic(nn.Module):
     def __init__(self, args, obs_space, device=torch.device("cpu")):
@@ -18,7 +19,7 @@ class PPOCritic(nn.Module):
         self.recurrent_hidden_size = args.recurrent_hidden_size
         self.recurrent_hidden_layers = args.recurrent_hidden_layers
         self.tpdv = dict(dtype=torch.float32, device=device)
-        self.hidden_size=args.hidden_size
+        self.hidden_size = args.hidden_size
         # (1) feature extraction module
         # self.base = ConvBase(observation_space=obs_space, output_size=256)
         self.base = MLPBase(obs_space, self.hidden_size, self.activation_id)
@@ -28,8 +29,12 @@ class PPOCritic(nn.Module):
         if len(self.act_hidden_size) > 0:
             self.mlp = MLPLayer(input_size, self.act_hidden_size, self.activation_id)
         input_size = self.mlp.output_size
+        # self.value_out = self.init_(nn.Linear(input_size, 1))
         self.value_out = nn.Linear(input_size, 1)
         self.to(device)
+
+    def init_(self, m):
+        return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.01)
 
     def forward(self, obs, rnn_states, masks):
         obs = check(obs).to(**self.tpdv)
