@@ -258,8 +258,9 @@ class HierSharedReplayBuffer:
         self.masks = np.ones((self.buffer_size + 1, self.n_rollout_threads, self.num_agents, 1), dtype=np.float32)
 
         # pi(a)
+        # todo:save the real sample prob add 1
         self.action_log_probs = [np.zeros((self.buffer_size, self.n_rollout_threads, self.num_agents, *act_shape),
-                                          dtype=np.float32) for _ in range(5)]
+                                          dtype=np.float32) for _ in range(5 + 1)]
         # V(o), R(o) while advantage = returns - value_preds
         self.value_preds = [np.zeros((self.buffer_size + 1, self.n_rollout_threads, self.num_agents, 1),
                                      dtype=np.float32) for _ in range(5)]
@@ -293,6 +294,7 @@ class HierSharedReplayBuffer:
             self.returns[i] = np.zeros_like(self.returns[i], dtype=np.float32)
             self.rnn_states_actor[i] = np.zeros_like(self.rnn_states_critic[i])
             self.rnn_states_critic[i] = np.zeros_like(self.rnn_states_actor[i])
+        self.action_log_probs[-1] = np.zeros_like(self.action_log_probs[-1], dtype=np.float32)
         self.share_obs = np.zeros_like(self.share_obs)
 
     @property
@@ -300,7 +302,7 @@ class HierSharedReplayBuffer:
         advantages = []
         for i in range(5):
             a = self.returns[i][:-1] - self.value_preds[i][:-1]  # type: np.ndarray
-            a = (a - a.mean()) / (a.std() + 1e-5)
+            # a = (a - a.mean()) / (a.std() + 1e-5)
             advantages.append(a.copy())
         return advantages
 
@@ -332,11 +334,12 @@ class HierSharedReplayBuffer:
         self.actions[self.step] = actions.copy()
         self.rewards[self.step] = rewards.copy()
         self.masks[self.step + 1] = masks.copy()
-        for i in range(len(action_log_probs)):
+        for i in range(5):
             self.action_log_probs[i][self.step] = action_log_probs[i].copy()
             self.value_preds[i][self.step] = value_preds[i].copy()
             self.rnn_states_actor[i][self.step + 1] = rnn_states_actor[i].copy()
             self.rnn_states_critic[i][self.step + 1] = rnn_states_critic[i].copy()
+        self.action_log_probs[-1][self.step] = action_log_probs[-1].copy()
         self.step = (self.step + 1) % self.buffer_size
 
     def after_update(self):
@@ -344,9 +347,8 @@ class HierSharedReplayBuffer:
         self.obs[0] = self.obs[-1].copy()
         self.masks[0] = self.masks[-1].copy()
         for i in range(5):
-            self.rnn_states_actor[i][0]=self.rnn_states_actor[i][-1].copy()
-            self.rnn_states_critic[i][0]=self.rnn_states_critic[i][-1].copy()
-
+            self.rnn_states_actor[i][0] = self.rnn_states_actor[i][-1].copy()
+            self.rnn_states_critic[i][0] = self.rnn_states_critic[i][-1].copy()
 
     def recurrent_generator(self, advantages: np.ndarray, num_mini_batch: int, data_chunk_length: int):
         """
@@ -378,7 +380,7 @@ class HierSharedReplayBuffer:
 
         for i in range(5):
             old_action_log_probs.append(self._cast(self.action_log_probs[i]).copy())
-            advantages[i]=self._cast(advantages[i])
+            advantages[i] = self._cast(advantages[i])
             returns.append(self._cast(self.returns[i][:-1]).copy())
             value_preds.append(self._cast(self.value_preds[i][:-1]).copy())
             rnn_states_actor.append(self._cast(self.rnn_states_actor[i][:-1]).copy())
@@ -442,8 +444,10 @@ class HierSharedReplayBuffer:
                 value_preds_batch = np.stack(value_preds_batch, axis=1)
 
                 # States is just a (N, -1) from_numpy
-                rnn_states_actor_batch = np.stack(rnn_states_actor_batch).reshape(N, *self.rnn_states_actor[i].shape[3:])
-                rnn_states_critic_batch = np.stack(rnn_states_critic_batch).reshape(N, *self.rnn_states_critic[i].shape[3:])
+                rnn_states_actor_batch = np.stack(rnn_states_actor_batch).reshape(N,
+                                                                                  *self.rnn_states_actor[i].shape[3:])
+                rnn_states_critic_batch = np.stack(rnn_states_critic_batch).reshape(N, *self.rnn_states_critic[i].shape[
+                                                                                        3:])
 
                 # Flatten the (L, N, ...) from_numpys to (L * N, ...)
                 obs_batch = self._flatten(L, N, obs_batch)
@@ -481,10 +485,11 @@ class HierSharedReplayBuffer:
             self.value_preds[i][-1] = next_value[i].copy()
         self.rewards = np.expand_dims(np.repeat(self.rewards.squeeze(-1).mean(-1, keepdims=True), self.num_agents, -1),
                                       -1)
-        gae = [0]*5
+        gae = [0] * 5
         for step in reversed(range(self.rewards.shape[0])):
             for i in range(5):
-                td_delta = self.rewards[step] + self.gamma * self.value_preds[i][step + 1] * self.masks[step + 1] - \
+                td_delta = (self.rewards[step] + self.gamma * self.value_preds[i][step + 1] * self.masks[step + 1]) * \
+                           np.clip(np.exp(self.action_log_probs[i][step] - self.action_log_probs[-1][step]),0.8,1.2) - \
                            self.value_preds[i][step]
                 gae[i] = td_delta + self.gamma * self.gae_lambda * self.masks[step + 1] * gae[i]
                 self.returns[i][step] = gae[i] + self.value_preds[i][step]

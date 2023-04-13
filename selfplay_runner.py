@@ -95,7 +95,7 @@ class ShareRunner:
             self.hierarchical_network(self.all_args)
             self.policy = [Policy(i, self.obs_space, self.share_obs_space, self.act_space,
                                   device=self.device) for i in [self.v1, self.v2, self.v3, self.v4, self.v5]]
-            self.prob = np.array([1, 0.8, 0.6, 0.4, 0.2], dtype=float)
+            self.prob = np.array([4, 2, 1, 0.5, 0.25], dtype=float)
             self.delta = np.array([0.0025, 0.005, 0.0075, 0.01, 0.02])
 
         self.trainer = Trainer(self.all_args, device=self.device)
@@ -289,7 +289,7 @@ class ShareRunner:
                 rnn_states_actor.append(ra)
                 rnn_states_critic.append(rc)
             actions = np.array(np.split(_t2n(actions), self.n_rollout_threads))
-
+            action_log_probs.append(np.array(np.split(_t2n(AP), self.n_rollout_threads)))
         else:
             self.policy.prep_rollout()
 

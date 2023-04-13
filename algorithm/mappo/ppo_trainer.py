@@ -115,7 +115,7 @@ class PPOTrainer:
                                                                                                 self.clip_param)
                     value_losses = (values - returns_batch).pow(2)
                     value_losses_clipped = (value_pred_clipped - returns_batch).pow(2)
-                    value_loss = 0.5 * torch.max(value_losses, value_losses_clipped)
+                    value_loss = 0.5 * torch.min(value_losses, value_losses_clipped)
                 else:
                     value_loss = 0.5 * (returns_batch - values).pow(2)
 
@@ -150,8 +150,9 @@ class PPOTrainer:
         if prob is not None:
             softmax = prob / prob.sum()
             for i in range(len(softmax)):
-                lr = np.clip(self.args.lr if softmax[i] > 0.4 else self.args.lr * (softmax[i] + 0.01) / 0.41, 1e-4,
+                lr = np.clip(self.args.lr if softmax[i] > 0.6 else self.args.lr * (softmax[i] + 0.01) / 0.41, 1e-4,
                              1e-3).item()
+
                 for params in policy[i].optimizer.param_groups:  # 遍历Optimizer中的每一组参数
                     params['lr'] = lr
 
