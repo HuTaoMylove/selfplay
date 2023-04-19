@@ -1,3 +1,5 @@
+import copy
+
 import gym
 import numpy as np
 import torch
@@ -7,7 +9,7 @@ from ..utils.mlp import MLPBase
 from ..utils.gru import GRULayer
 from ..utils.act import ACTLayer
 from ..utils.utils import check
-from ..utils.conv import ConvBase
+from algorithm.utils.selfattention import SelfAttention
 
 
 class PPOActor(nn.Module):
@@ -21,27 +23,19 @@ class PPOActor(nn.Module):
         self.activation_id = args.activation_id
         self.recurrent_hidden_size = args.recurrent_hidden_size
         self.recurrent_hidden_layers = args.recurrent_hidden_layers
-        self.args = args
+        self.algo = self.args.selfplay_algorithm
+
         self.tpdv = dict(dtype=torch.float32, device=device)
-
-        if self.obs_version == 'v1':
-            # leftpos ballpos
-            obs_space = gym.spaces.Box(low=np.array([-np.inf] * 19), high=np.array([np.inf] * 19), dtype=float)
-        elif self.obs_version == 'v2':
-            # leftpos rightpos ballpos
-            obs_space = gym.spaces.Box(low=np.array([-np.inf] * 27), high=np.array([np.inf] * 27), dtype=float)
-        elif self.obs_version == 'v3':
-            # leftpos leftdir rightpos ballpos balldir
-            obs_space = gym.spaces.Box(low=np.array([-np.inf] * 30), high=np.array([np.inf] * 30), dtype=float)
-        elif self.obs_version == 'v4':
-            # leftpos leftdir rightpos rightdir ballpos balldir
-            obs_space = gym.spaces.Box(low=np.array([-np.inf] * 42), high=np.array([np.inf] * 42), dtype=float)
-        elif self.obs_version == 'v5':
-            # leftpos leftdir rightpos rightdir ballpos balldir ballrotate busy (full obs)
-            obs_space = gym.spaces.Box(low=np.array([-np.inf] * 38), high=np.array([np.inf] * 38), dtype=float)
-
-        self.base = MLPBase(obs_space, self.hidden_size, self.activation_id)
-        input_size = self.base.output_size
+        if self.algo == 'hsp':
+            self.id = nn.Linear(5, 64)
+            self.mode = nn.Linear(7, 64)
+            self.pos = nn.Linear(2, 64)
+            self.dir_base = nn.Linear(2, 64)
+            self.attention = SelfAttention(64, 64, 64)
+            input_size = 64
+        else:
+            self.base = MLPBase(obs_space, self.hidden_size, self.activation_id)
+            input_size = self.base.output_size
         self.rnn = GRULayer(input_size, self.recurrent_hidden_size, self.recurrent_hidden_layers)
         input_size = self.rnn.output_size
         # (3) act module
@@ -53,18 +47,13 @@ class PPOActor(nn.Module):
         rnn_states = check(rnn_states).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
 
-        if self.obs_version == 'v1':
-            # leftpos ballpos
-            obs = torch.cat([obs[..., :14], obs[..., 26:29], obs[..., -2:]], dim=-1)
-        elif self.obs_version == 'v2':
-            # leftpos rightpos ballpos
-            obs = torch.cat([obs[..., :22], obs[..., 34:37], obs[..., -2:]], dim=-1)
-        elif self.obs_version == 'v3':
-            # leftpos leftdir rightpos ballpos balldir
-            obs = torch.cat([obs[..., :22], obs[..., 26:32], obs[..., -2:]], dim=-1)
-        elif self.obs_version == 'v4':
-            # leftpos leftdir rightpos rightdir ballpos balldir
-            obs = torch.cat([obs[..., :40], obs[..., -2:]], dim=-1)
+        if self.algo == 'hsp':
+            id = self.id(obs[:, :5])
+            mode = self.mode(obs[:, 5:12])
+            pos = self.pos(obs[:, 12:22].reshape(-1, 5, 2))
+            dir = self.pos(obs[:, 22:].reshape(-1, 5, 2))
+
+
 
         actor_features = self.base(obs)
         actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)

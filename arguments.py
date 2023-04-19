@@ -16,6 +16,20 @@ def get_args():
     parse.add_argument('--rewards', type=str, default='scoring,checkpoints')
     parse.add_argument('--render', type=bool, default=False, help='show nr not')
 
+    parse.add_argument("--obs-version", type=str, default='v1')
+    parse.add_argument("--hidden-size", type=str, default='128 128',
+                       help="Dimension of hidden layers for mlp pre-process")
+    parse.add_argument("--act-hidden-size", type=str, default='128 128',
+                       help="Dimension of hidden layers for actlayer (default '128 128')")
+    parse.add_argument("--activation-id", type=int, default=1,
+                       help="Choose 0 to use Tanh, 1 to use ReLU, 2 to use LeakyReLU, 3 to use ELU (default 1)")
+    parse.add_argument("--gain", type=float, default=0.01,
+                       help="The gain # of last action layer")
+    parse.add_argument("--recurrent-hidden-size", type=int, default=128,
+                       help="Dimension of hidden layers for recurrent layers (default 128)")
+    parse.add_argument("--recurrent-hidden-layers", type=int, default=1,
+                       help="The number of recurrent layers (default 1)")
+
     """
     selfplay para
     """
