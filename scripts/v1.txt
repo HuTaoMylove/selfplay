@@ -1,0 +1,5 @@
+#!/bin/sh
+
+
+python main.py  --obs-version "v1" --data-chunk-length 8 --num-env-steps 50000000
+

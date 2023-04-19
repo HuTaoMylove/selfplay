@@ -1,0 +1,5 @@
+#!/bin/sh
+
+
+python main.py  --obs-version "v3" --data-chunk-length 12 --num-env-steps 50000000 --buffer-size 6000 --n-rollout 5
+

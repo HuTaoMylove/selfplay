@@ -2,7 +2,7 @@ from arguments import get_args
 from selfplay_runner import ShareRunner
 import gfootball.env as football_env
 # from utils import *
-from multiagent_setup import get_env, get_eval_env,get_test_env
+from multiagent_setup import get_env, get_eval_env, get_test_env
 import os
 import traceback
 import torch
@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     all_args = get_args()
-    
+
     np.random.seed(all_args.seed)
     random.seed(all_args.seed)
     torch.manual_seed(all_args.seed)
@@ -55,7 +55,6 @@ if __name__ == '__main__':
         "run_dir": run_dir,
         "log_dir": log_dir
     }
-
 
     runner = ShareRunner(config)
     try:

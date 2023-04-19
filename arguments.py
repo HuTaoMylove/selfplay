@@ -8,7 +8,7 @@ def get_args():
     env para
     """
     parse.add_argument('--env-name', type=str, default='5_vs_5')
-    parse.add_argument('--num-env-steps', type=int, default=1e8, help='the steps to collect samples')
+    parse.add_argument('--num-env-steps', type=int, default=3e8, help='the steps to collect samples')
     parse.add_argument('--cuda', action='store_true', default=False, help='use cuda do the training')
     parse.add_argument('--num-agent', type=int, default=4)
     parse.add_argument('--left-agent', type=int, default=2)
@@ -19,8 +19,8 @@ def get_args():
     """
     selfplay para
     """
-    parse.add_argument('--n-rollout', type=int, default=10, help='the number of para env')
-    parse.add_argument("--selfplay-algorithm", type=str, default='hsp', choices=["hsp", "sp", "fsp", "pfsp"],
+    parse.add_argument('--n-rollout', type=int, default=5, help='the number of para env')
+    parse.add_argument("--selfplay-algorithm", type=str, default='hsp', choices=["hsp", "fsp", "pfsp"],
                        help="Specifiy the selfplay algorithm (default 'sp')")
     parse.add_argument('--n-choose-opponents', type=int, default=5,
                        help="number of different opponents chosen for rollout. (default 1)")
@@ -28,28 +28,10 @@ def get_args():
                        help="initial ELO for policy performance. (default 1000.0)")
 
     """
-    networt para
-    """
-    parse.add_argument("--obs-version", type=str, default='v1')
-
-    parse.add_argument("--hidden-size", type=str, default='128 128',
-                       help="Dimension of hidden layers for mlp pre-process")
-    parse.add_argument("--act-hidden-size", type=str, default='128 128',
-                       help="Dimension of hidden layers for actlayer (default '128 128')")
-    parse.add_argument("--activation-id", type=int, default=1,
-                       help="Choose 0 to use Tanh, 1 to use ReLU, 2 to use LeakyReLU, 3 to use ELU (default 1)")
-    parse.add_argument("--gain", type=float, default=0.01,
-                       help="The gain # of last action layer")
-    parse.add_argument("--recurrent-hidden-size", type=int, default=128,
-                       help="Dimension of hidden layers for recurrent layers (default 128)")
-    parse.add_argument("--recurrent-hidden-layers", type=int, default=1,
-                       help="The number of recurrent layers (default 1)")
-
-    """
     train para
     """
 
-    parse.add_argument("--buffer-size", type=int, default=1000,
+    parse.add_argument("--buffer-size", type=int, default=2000,
                        help="maximum storage in the buffer.")
     parse.add_argument("--data-chunk-length", type=int, default=8,
                        help="Time length of chunks used to train a recurrent_policy (default 16)")

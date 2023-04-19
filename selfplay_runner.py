@@ -76,11 +76,8 @@ class ShareRunner:
                 self.gae_lambda = all_args.gae_lambda
 
         self.v1 = Args()
-        self.v2 = Args('v2')
         self.v3 = Args('v3')
-        self.v4 = Args('v4')
         self.v5 = Args('v5')
-        self.vr = Args('vr')
 
     def __init__(self, config):
 
@@ -524,29 +521,31 @@ class ShareRunner:
                 policy.reload()
 
     def reset_opponent(self):
-        if self.all_args.selfplay_algorithm == 'sp':
-            for p in self.opponent_policy:
-                p.reload()
-                p.reset(self.n_rollout_threads / self.max_policy_size)
-        elif self.all_args.selfplay_algorithm == 'fsp':
-            for p in self.opponent_policy:
-                p.reload(np.random.choice(list(self.policy_pool.keys())))
-                p.reset(self.n_rollout_threads / self.max_policy_size)
-        else:
-            if self.all_args.obs_version == 'v3':
-                self.opponent_policy[-3].reload()
-                self.opponent_policy[-3].reset(self.n_rollout_threads / self.max_policy_size)
-            elif self.all_args.obs_version == 'v5':
-                self.opponent_policy[-3].reload()
-                self.opponent_policy[-3].reset(self.n_rollout_threads / self.max_policy_size)
-                self.opponent_policy[1].reload()
-                self.opponent_policy[1].reset(self.n_rollout_threads / self.max_policy_size)
-            self.opponent_policy[-1].reload()
-            idx = np.random.choice(list(self.policy_pool.keys()))
-            self.opponent_policy[-2].reload(idx)
-            self.opponent_policy[-1].reset(self.n_rollout_threads / self.max_policy_size)
-            self.opponent_policy[-2].reset(self.n_rollout_threads / self.max_policy_size)
-            logging.info(f" Choose opponents {idx} for training")
+        # if self.all_args.selfplay_algorithm == 'sp':
+        #     for p in self.opponent_policy:
+        #         p.reload()
+        #         p.reset(self.n_rollout_threads / self.max_policy_size)
+        # elif self.all_args.selfplay_algorithm == 'fsp':
+        #     for p in self.opponent_policy:
+        #         p.reload(np.random.choice(list(self.policy_pool.keys())))
+        #         p.reset(self.n_rollout_threads / self.max_policy_size)
+        # else:
+        #     if self.all_args.obs_version == 'v3':
+        #         self.opponent_policy[-3].reload()
+        #         self.opponent_policy[-3].reset(self.n_rollout_threads / self.max_policy_size)
+        #     elif self.all_args.obs_version == 'v5':
+        #         self.opponent_policy[-3].reload()
+        #         self.opponent_policy[-3].reset(self.n_rollout_threads / self.max_policy_size)
+        #         self.opponent_policy[1].reload()
+        #         self.opponent_policy[1].reset(self.n_rollout_threads / self.max_policy_size)
+        #     self.opponent_policy[-1].reload()
+        #     idx = np.random.choice(list(self.policy_pool.keys()))
+        #     self.opponent_policy[-2].reload(idx)
+        #     self.opponent_policy[-1].reset(self.n_rollout_threads / self.max_policy_size)
+        #     self.opponent_policy[-2].reset(self.n_rollout_threads / self.max_policy_size)
+        #     logging.info(f" Choose opponents {idx} for training")
+
+
 
         # clear buffer
         self.buffer.clear()
