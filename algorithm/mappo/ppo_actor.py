@@ -17,22 +17,22 @@ class PPOActor(nn.Module):
         super(PPOActor, self).__init__()
         # network config
         self.gain = args.gain
-        self.obs_version = args.obs_version
         self.hidden_size = args.hidden_size
         self.act_hidden_size = args.act_hidden_size
         self.activation_id = args.activation_id
         self.recurrent_hidden_size = args.recurrent_hidden_size
         self.recurrent_hidden_layers = args.recurrent_hidden_layers
-        self.algo = self.args.selfplay_algorithm
+        self.algo = args.selfplay_algorithm
 
         self.tpdv = dict(dtype=torch.float32, device=device)
         if self.algo == 'hsp':
-            self.id = nn.Linear(5, 64)
-            self.mode = nn.Linear(7, 64)
-            self.pos = nn.Linear(2, 64)
-            self.dir_base = nn.Linear(2, 64)
-            self.attention = SelfAttention(64, 64, 64)
-            input_size = 64
+            self.id = nn.Linear(5, 96)
+            self.mode = nn.Linear(7, 96)
+            self.pos = nn.Linear(2, 96)
+            self.dir = nn.Linear(2, 96)
+
+            self.attention = SelfAttention(96, 96, 96)
+            input_size = 96
         else:
             self.base = MLPBase(obs_space, self.hidden_size, self.activation_id)
             input_size = self.base.output_size
@@ -48,14 +48,15 @@ class PPOActor(nn.Module):
         masks = check(masks).to(**self.tpdv)
 
         if self.algo == 'hsp':
-            id = self.id(obs[:, :5])
-            mode = self.mode(obs[:, 5:12])
+            id = self.id(obs[:, :5]).unsqueeze(1)
+            mode = self.mode(obs[:, 5:12]).unsqueeze(1)
             pos = self.pos(obs[:, 12:22].reshape(-1, 5, 2))
-            dir = self.pos(obs[:, 22:].reshape(-1, 5, 2))
-
-
-
-        actor_features = self.base(obs)
+            dir = self.dir(obs[:, 22:].reshape(-1, 5, 2))
+            full = torch.cat([id, mode, pos, dir], dim=1)
+            actor_features = self.attention(full)
+            actor_features = torch.mean(actor_features, dim=1)
+        else:
+            actor_features = self.base(obs)
         actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
         actions, action_log_probs = self.act(actor_features, deterministic)
         return actions, action_log_probs, rnn_states
@@ -65,19 +66,17 @@ class PPOActor(nn.Module):
         rnn_states = check(rnn_states).to(**self.tpdv)
         action = check(action).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
-        if self.obs_version == 'v1':
-            # leftpos ballpos
-            obs = torch.cat([obs[..., :14], obs[..., 26:29], obs[..., -2:]], dim=-1)
-        elif self.obs_version == 'v2':
-            # leftpos rightpos ballpos
-            obs = torch.cat([obs[..., :22], obs[..., 34:37], obs[..., -2:]], dim=-1)
-        elif self.obs_version == 'v3':
-            # leftpos leftdir rightpos ballpos balldir
-            obs = torch.cat([obs[..., :22], obs[..., 26:32], obs[..., -2:]], dim=-1)
-        elif self.obs_version == 'v4':
-            # leftpos leftdir rightpos rightdir ballpos balldir
-            obs = torch.cat([obs[..., :40], obs[..., -2:]], dim=-1)
-        actor_features = self.base(obs)
+
+        if self.algo == 'hsp':
+            id = self.id(obs[:, :5]).unsqueeze(1)
+            mode = self.mode(obs[:, 5:12]).unsqueeze(1)
+            pos = self.pos(obs[:, 12:22].reshape(-1, 5, 2))
+            dir = self.dir(obs[:, 22:].reshape(-1, 5, 2))
+            full = torch.cat([id, mode, pos, dir], dim=1)
+            actor_features = self.attention(full)
+            actor_features = torch.mean(actor_features, dim=1)
+        else:
+            actor_features = self.base(obs)
 
         actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
 

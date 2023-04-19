@@ -4,7 +4,7 @@ from .ppo_critic import PPOCritic
 
 
 class PPOPolicy:
-    def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu")):
+    def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu"), mode=0):
         self.args = args
         self.device = device
         # optimizer config
@@ -16,6 +16,7 @@ class PPOPolicy:
 
         self.actor = PPOActor(args, self.obs_space, self.act_space, self.device)
         self.critic = PPOCritic(args, self.cent_obs_space, self.device)
+        self.mode = mode
 
         self.optimizer = torch.optim.Adam([
             {'params': self.actor.parameters()},
@@ -27,7 +28,13 @@ class PPOPolicy:
         Returns:
             values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
         """
-
+        if self.args.selfplay_algorithm == 'hsp':
+            if self.mode < 1:
+                cent_obs[:, 16:] = 0
+                obs[:, 18:] = 0
+            elif self.mode < 4:
+                cent_obs[:, 22:] = 0
+                obs[:, 24:] = 0
         actions, action_log_probs, rnn_states_actor = self.actor(obs, rnn_states_actor, masks)
         values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
@@ -37,29 +44,48 @@ class PPOPolicy:
         Returns:
             values
         """
+        if self.args.selfplay_algorithm == 'hsp':
+            if self.mode < 1:
+                cent_obs[:, 16:] = 0
+            elif self.mode < 4:
+                cent_obs[:, 22:] = 0
         values, _ = self.critic(cent_obs, rnn_states_critic, masks)
         return values
 
-    def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, action, masks , return_rnn=False):
+    def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, action, masks, return_rnn=False):
         """
         Returns:
             values, action_log_probs, dist_entropy
         """
+        if self.args.selfplay_algorithm == 'hsp':
+            if self.mode < 1:
+                cent_obs[:, 16:] = 0
+                obs[:, 18:] = 0
+            elif self.mode < 4:
+                cent_obs[:, 22:] = 0
+                obs[:, 24:] = 0
+
         if return_rnn == False:
             action_log_probs, dist_entropy = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks)
             values, _ = self.critic(cent_obs, rnn_states_critic, masks)
             return values, action_log_probs, dist_entropy
         else:
-            action_log_probs, dist_entropy, n_rnn_states_actor = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks,True)
+            action_log_probs, dist_entropy, n_rnn_states_actor = self.actor.evaluate_actions(obs, rnn_states_actor,
+                                                                                             action, masks, True)
             values, n_rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
             return values, action_log_probs, dist_entropy, n_rnn_states_actor, n_rnn_states_critic
-
 
     def act(self, obs, rnn_states_actor, masks, deterministic=False):
         """
         Returns:
             actions, rnn_states_actor
         """
+        if self.args.selfplay_algorithm == 'hsp':
+            if self.mode < 1:
+                obs[:, 18:] = 0
+            elif self.mode < 4:
+                obs[:, 24:] = 0
+
         actions, _, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, deterministic)
         return actions, rnn_states_actor
 

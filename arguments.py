@@ -8,7 +8,7 @@ def get_args():
     env para
     """
     parse.add_argument('--env-name', type=str, default='5_vs_5')
-    parse.add_argument('--num-env-steps', type=int, default=3e8, help='the steps to collect samples')
+    parse.add_argument('--num-env-steps', type=int, default=1e8, help='the steps to collect samples')
     parse.add_argument('--cuda', action='store_true', default=False, help='use cuda do the training')
     parse.add_argument('--num-agent', type=int, default=4)
     parse.add_argument('--left-agent', type=int, default=2)
@@ -16,7 +16,6 @@ def get_args():
     parse.add_argument('--rewards', type=str, default='scoring,checkpoints')
     parse.add_argument('--render', type=bool, default=False, help='show nr not')
 
-    parse.add_argument("--obs-version", type=str, default='v1')
     parse.add_argument("--hidden-size", type=str, default='128 128',
                        help="Dimension of hidden layers for mlp pre-process")
     parse.add_argument("--act-hidden-size", type=str, default='128 128',
@@ -33,7 +32,7 @@ def get_args():
     """
     selfplay para
     """
-    parse.add_argument('--n-rollout', type=int, default=5, help='the number of para env')
+    parse.add_argument('--n-rollout', type=int, default=10, help='the number of para env')
     parse.add_argument("--selfplay-algorithm", type=str, default='hsp', choices=["hsp", "fsp", "pfsp"],
                        help="Specifiy the selfplay algorithm (default 'sp')")
     parse.add_argument('--n-choose-opponents', type=int, default=5,
@@ -45,7 +44,7 @@ def get_args():
     train para
     """
 
-    parse.add_argument("--buffer-size", type=int, default=2000,
+    parse.add_argument("--buffer-size", type=int, default=1000,
                        help="maximum storage in the buffer.")
     parse.add_argument("--data-chunk-length", type=int, default=8,
                        help="Time length of chunks used to train a recurrent_policy (default 16)")
@@ -101,11 +100,11 @@ def get_args():
     interval para
     """
 
-    parse.add_argument('--save-interval', type=int, default=5, help='the number of save')
+    parse.add_argument('--save-interval', type=int, default=4, help='the number of save')
     parse.add_argument('--log-interval', type=int, default=1, help='the number of log')
-    parse.add_argument("--eval-interval", type=int, default=1, help="time duration between contiunous twice "
+    parse.add_argument("--eval-interval", type=int, default=4, help="time duration between contiunous twice "
                                                                     "evaluation progress. (default 25)")
-    parse.add_argument("--test-interval", type=int, default=5, help="time duration between contiunous twice "
+    parse.add_argument("--test-interval", type=int, default=4, help="time duration between contiunous twice "
                                                                     "evaluation progress. (default 25)")
     parse.add_argument('--seed', type=int, default=123, help='the random seeds')
     parse.add_argument('--n-training', type=int, default=4, help='the number of workers to collect samples')

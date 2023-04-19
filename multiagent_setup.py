@@ -47,28 +47,18 @@ class FootballEnv:
             high=self.env.observation_space.high[0],
             dtype=float)
         self.share_observation_space = gym.spaces.Box(
-            low=self.env.observation_space.low[0][:-1],
-            high=self.env.observation_space.high[0][:-1],
+            low=self.env.observation_space.low[0][:-2],
+            high=self.env.observation_space.high[0][:-2],
             dtype=float)
 
     def reset(self):
         o = self.env.reset()
-        half = int(self.num_agents // 2)
-        left_half = np.concatenate(
-            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:half, -3], axis=0)], axis=-1)] * half)
-        right_half = np.concatenate(
-            [np.concatenate([np.expand_dims(o[half][:-3], 0), np.expand_dims(o[half:, -3], axis=0)], axis=-1)] * half)
-        share_o = np.concatenate([left_half, right_half], axis=0)
+        share_o = o[:, 2:]
         return o, share_o
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
         o, r, d, i = self.env.step(action.reshape(self.num_agents, ))
-        half = int(self.num_agents // 2)
-        left_half = np.concatenate(
-            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:half, -3], axis=0)], axis=-1)] * half)
-        right_half = np.concatenate(
-            [np.concatenate([np.expand_dims(o[half][:-3], 0), np.expand_dims(o[half:, -3], axis=0)], axis=-1)] * half)
-        share_o = np.concatenate([left_half, right_half], axis=0)
+        share_o = o[:, 2:]
         return o, share_o, r, d, i
 
     def close(self):
@@ -100,20 +90,18 @@ class TestEnv:
             high=self.env.observation_space.high[0],
             dtype=self.env.observation_space.dtype)
         self.share_observation_space = gym.spaces.Box(
-            low=self.env.observation_space.low[0][:-1],
-            high=self.env.observation_space.high[0][:-1],
+            low=self.env.observation_space.low[0][:-2],
+            high=self.env.observation_space.high[0][:-2],
             dtype=float)
 
     def reset(self):
         o = self.env.reset()
-        share_o = np.concatenate(
-            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:, -3], axis=0)], axis=-1)] * self.num_agents)
+        share_o = o[:, 2:]
         return o, share_o
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
         o, r, d, i = self.env.step(action.reshape(self.num_agents, ))
-        share_o = np.concatenate(
-            [np.concatenate([np.expand_dims(o[0][:-3], 0), np.expand_dims(o[:, -3], axis=0)], axis=-1)] * self.num_agents)
+        share_o = o[:, 2:]
         return o, share_o, r, d, i
 
     def close(self):

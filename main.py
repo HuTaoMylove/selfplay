@@ -27,10 +27,10 @@ if __name__ == '__main__':
     test_envs = get_test_env()
 
     run_dir = Path("./results") \
-              / all_args.env_name / all_args.obs_version
+              / all_args.env_name / all_args.selfplay_algorithm
     if not run_dir.exists():
         os.makedirs(str(run_dir))
-    log_dir = Path("./log") / all_args.env_name / all_args.obs_version
+    log_dir = Path("./log") / all_args.env_name / all_args.selfplay_algorithm
     if not log_dir.exists():
         os.makedirs(str(log_dir))
 

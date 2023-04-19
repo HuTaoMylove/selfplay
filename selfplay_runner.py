@@ -22,27 +22,29 @@ def _t2n(x):
 
 class Agent:
     def __init__(self, args, model_path=None):
-        self.obs_version = args.obs_version
-        self.net = PPOActor(args, None, gym.spaces.Discrete(19), device=torch.device('cpu'))
+        self.net = Policy(args, gym.spaces.Box(np.zeros(32), np.zeros(32)), gym.spaces.Box(np.zeros(30), np.zeros(30)),
+                          gym.spaces.Discrete(19), device=torch.device('cpu'))
         if model_path is not None:
-            self.net.load_state_dict(torch.load(model_path))
+            self.net.actor.load_state_dict(torch.load(model_path))
         self.recurrent_hidden_size = args.recurrent_hidden_size
-        self.obs_version = args.obs_version
+        self.algo = args.selfplay_algorithm
+        self.args = args
 
     def reset(self, n_threads: int):
         self.n_threads = int(n_threads)
         self.rnn_state = np.zeros([self.n_threads, 2, 1, self.recurrent_hidden_size])
         self.mask = np.ones([self.n_threads, 2, 1])
 
-    def reload(self, idx="latest"):
-        self.net.load_state_dict(torch.load(
-            r'results/5_vs_5/' + self.obs_version + '/' + f'/actor_{idx}.pt'))
+    def reload(self, idx):
+        self.net.actor.load_state_dict(torch.load(
+            r'results/5_vs_5/' + self.algo + '/' + f'/actor_{idx}.pt'))
+        self.net.mode = int(idx) * self.args.buffer_size * self.args.n_rollout // 1e7
 
     def act(self, opponent_obs):
-        opponent_action, _, opponent_rnn_states \
-            = self.net(np.concatenate(opponent_obs),
-                       np.concatenate(self.rnn_state),
-                       np.concatenate(self.mask))
+        opponent_action, opponent_rnn_states \
+            = self.net.act(np.concatenate(opponent_obs),
+                           np.concatenate(self.rnn_state),
+                           np.concatenate(self.mask))
         self.rnn_state = np.array(np.split(_t2n(opponent_rnn_states), self.n_threads))
         return opponent_action
 
@@ -83,8 +85,6 @@ class ShareRunner:
         self.writer = SummaryWriter(self.log_dir)
         self.load()
 
-
-
     def load(self):
         self.obs_space = self.envs.observation_space
         self.share_obs_space = self.envs.share_observation_space
@@ -97,12 +97,11 @@ class ShareRunner:
                              device=self.device)
 
         self.trainer = Trainer(self.all_args, device=self.device)
-        self.buffer = SharedReplayBuffer(self.get_args(self.all_args.obs_version), self.num_agents // 2, self.obs_space,
+        self.buffer = SharedReplayBuffer(self.all_args, self.num_agents // 2, self.obs_space,
                                          self.share_obs_space,
                                          self.act_space)
         # [Selfplay] allocate memory for opponent policy/data in training
-        from algorithm.utils.selfplay import get_algorithm
-        self.selfplay_algo = get_algorithm(self.all_args.selfplay_algorithm)
+        self.selfplay_algo = self.all_args.selfplay_algorithm
 
         assert self.all_args.n_choose_opponents <= self.n_rollout_threads, \
             "Number of different opponents({}) must less than or equal to number of training threads({})!" \
@@ -110,7 +109,7 @@ class ShareRunner:
 
         self.policy_pool = {'0': self.all_args.init_elo}  # type: dict[str, float]
         self.opponent_policy = [
-                Agent(i) for i in [self.v1, self.v1, self.v1, self.v1, self.v1]]
+            Agent(i) for i in [self.all_args] * 5]
 
         for i in self.opponent_policy:
             i.reset(self.n_rollout_threads / self.max_policy_size)
@@ -122,19 +121,15 @@ class ShareRunner:
             self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
                                                device=self.device)
 
-        if len(os.listdir(self.save_dir)) > 0:
-            self.restore()
-        else:
-            self.load_opp()
-
         logging.info("\n Load selfplay opponents: Algo {}, num_opponents {}.\n"
                      .format(self.all_args.selfplay_algorithm, self.all_args.n_choose_opponents))
 
-    def restore(self):
+    def restore(self, epo):
         policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
         self.policy.actor.load_state_dict(policy_actor_state_dict)
         policy_critic_state_dict = torch.load(str(self.save_dir) + '/critic_latest.pt')
         self.policy.critic.load_state_dict(policy_critic_state_dict)
+        self.policy.mode = epo * self.n_rollout_threads * self.buffer_size // 1e7
         if os.path.exists(str(self.save_dir) + '/elo.txt'):
             with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
                 self.policy_pool = json.load(file)
@@ -163,6 +158,7 @@ class ShareRunner:
             ea.Reload()
             already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards'))
             logging.info(f'already trained {already_trained_episodes} episodes')
+            self.restore(already_trained_episodes + 1)
 
         for episode in range(already_trained_episodes + 1, episodes):
             start = time.time()
@@ -182,18 +178,18 @@ class ShareRunner:
 
             # self.render()
             # post process
-            self.total_num_steps = episode * self.buffer_size * self.n_rollout_threads
+            self.total_num_steps = (episode + 1) * self.buffer_size * self.n_rollout_threads
 
             # log information
             if episode % self.log_interval == 0:
                 end = time.time()
                 logging.info(
                     "\n updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                    .format(episode,
-                            episodes,
-                            self.total_num_steps,
-                            self.num_env_steps,
-                            int(self.buffer_size * self.n_rollout_threads / (end - start))))
+                        .format(episode,
+                                episodes,
+                                self.total_num_steps,
+                                self.num_env_steps,
+                                int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
                 train_infos["average_episode_rewards"] = self.buffer.rewards[:, :, :2, :].sum() / (
                         (self.buffer.masks == False).sum() + 1)
@@ -214,6 +210,7 @@ class ShareRunner:
             if episode % self.test_interval == 0 and episode != 0:
                 self.test(self.total_num_steps)
 
+            self.policy.mode = self.total_num_steps // 1e7
             # save model
 
     def warmup(self):
@@ -292,7 +289,6 @@ class ShareRunner:
         self.buffer.insert(obs, share_obs, actions, rewards, masks, action_log_probs, values, \
                            rnn_states_actor, rnn_states_critic)
 
-
     @torch.no_grad()
     def test(self, total_num_steps):
         logging.info("\nStart test...")
@@ -335,39 +331,14 @@ class ShareRunner:
         torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
         self.policy_pool[str(episode)] = self.latest_elo
 
-    def load_opp(self):
-        for policy in self.opponent_policy:
-            if policy.obs_version != self.policy.args.obs_version and policy.obs_version != 'vr':
-                policy.reload()
-
     def reset_opponent(self):
-        # if self.all_args.selfplay_algorithm == 'sp':
-        #     for p in self.opponent_policy:
-        #         p.reload()
-        #         p.reset(self.n_rollout_threads / self.max_policy_size)
-        # elif self.all_args.selfplay_algorithm == 'fsp':
-        #     for p in self.opponent_policy:
-        #         p.reload(np.random.choice(list(self.policy_pool.keys())))
-        #         p.reset(self.n_rollout_threads / self.max_policy_size)
-        # else:
-        #     if self.all_args.obs_version == 'v3':
-        #         self.opponent_policy[-3].reload()
-        #         self.opponent_policy[-3].reset(self.n_rollout_threads / self.max_policy_size)
-        #     elif self.all_args.obs_version == 'v5':
-        #         self.opponent_policy[-3].reload()
-        #         self.opponent_policy[-3].reset(self.n_rollout_threads / self.max_policy_size)
-        #         self.opponent_policy[1].reload()
-        #         self.opponent_policy[1].reset(self.n_rollout_threads / self.max_policy_size)
-        #     self.opponent_policy[-1].reload()
-        #     idx = np.random.choice(list(self.policy_pool.keys()))
-        #     self.opponent_policy[-2].reload(idx)
-        #     self.opponent_policy[-1].reset(self.n_rollout_threads / self.max_policy_size)
-        #     self.opponent_policy[-2].reset(self.n_rollout_threads / self.max_policy_size)
-        #     logging.info(f" Choose opponents {idx} for training")
+        for i, p in enumerate(self.opponent_policy):
+            if i < 3:
+                p.reload(list(self.policy_pool.keys())[-1])
+            else:
+                p.reload(np.random.choice(list(self.policy_pool.keys())))
+            p.reset(self.n_rollout_threads / self.max_policy_size)
 
-
-
-        # clear buffer
         self.buffer.clear()
         self.opponent_obs = np.zeros_like(self.opponent_obs)
 
