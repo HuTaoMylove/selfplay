@@ -174,4 +174,4 @@ def get_test_env(name=None):
     if len(name) == 1:
         return ShareDummyVecEnv([get_env_fn(name[0])])
     else:
-        return ShareDummyVecEnv([get_env_fn(i) for i in name])
+        return ShareSubprocVecEnv([get_env_fn(i) for i in name])

@@ -16,13 +16,14 @@ if __name__ == '__main__':
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     all_args = get_args()
+    
     np.random.seed(all_args.seed)
     random.seed(all_args.seed)
     torch.manual_seed(all_args.seed)
     torch.cuda.manual_seed_all(all_args.seed)
 
     envs = get_env(all_args)
-    eval_envs = get_eval_env(all_args) if all_args.use_eval and not all_args.use_hierarchical_network else None
+    eval_envs = get_eval_env(all_args) if all_args.use_eval else None
     test_envs = get_test_env()
 
     run_dir = Path("./results") \

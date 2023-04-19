@@ -27,6 +27,7 @@ class PPOPolicy:
         Returns:
             values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
         """
+
         actions, action_log_probs, rnn_states_actor = self.actor(obs, rnn_states_actor, masks)
         values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
