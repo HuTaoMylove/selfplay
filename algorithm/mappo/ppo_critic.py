@@ -49,7 +49,7 @@ class PPOCritic(nn.Module):
     def init_(self, m):
         return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.01)
 
-    def forward(self, obs, rnn_states, masks):
+    def forward(self, obs, rnn_states, masks, att_mode=0):
         obs = check(obs).to(**self.tpdv)
         rnn_states = check(rnn_states).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
@@ -59,8 +59,7 @@ class PPOCritic(nn.Module):
             pos = self.pos(obs[:, 10:20].reshape(-1, 5, 2))
             dir = self.dir(obs[:, 20:].reshape(-1, 5, 2))
             full = torch.cat([id, mode, pos, dir], dim=1)
-            actor_features = self.attention(full)
-            critic_features = torch.mean(actor_features, dim=1)
+            critic_features = self.attention(full, att_mode)
         else:
             critic_features = self.base(obs)
 

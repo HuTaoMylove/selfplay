@@ -32,20 +32,39 @@ class SelfAttention(nn.Module):
         self.linear_v = nn.Linear(dim_q, dim_v, bias=False)
         self._norm_fact = 1 / sqrt(dim_k)
 
-    def forward(self, x):
+    def forward(self, x, mode=0):
         # x: batch, n, dim_q
         # 根据文本获得相应的维度
 
         batch, n, dim_q = x.shape
         assert dim_q == self.dim_q
-        x=self.pos_encoding(x)
+        x = self.pos_encoding(x)
         q = self.linear_q(x)  # batch, n, dim_k
         k = self.linear_k(x)  # batch, n, dim_k
         v = self.linear_v(x)  # batch, n, dim_v
         # q*k的转置 并*开根号后的dk
         dist = torch.bmm(q, k.transpose(1, 2)) * self._norm_fact  # batch, n, n
         # 归一化获得attention的相关系数
+        if mode == 0:
+            dist[:, :, 5:] = -torch.inf
+        elif mode == 1:
+            dist[:, :, 7:] = -torch.inf
         dist = torch.softmax(dist, dim=-1)  # batch, n, n
         # attention系数和v相乘，获得最终的得分
         att = torch.bmm(dist, v)
+        if mode == 0:
+            att[:, 5:, :] = 0
+        elif mode == 1:
+            att[:, 7:, :] = 0
+        att = torch.mean(att, dim=1)
+
+        # if mode == 0:
+        #     att = torch.cat([att, torch.ones([batch, 1]), torch.zeros([batch, 1]), torch.zeros([batch,  1])],
+        #                     dim=-1)
+        # elif mode == 1:
+        #     att = torch.cat([att, torch.zeros([batch, 1]), torch.ones([batch,  1]), torch.zeros([batch,  1])],
+        #                     dim=-1)
+        # elif mode == 2:
+        #     att = torch.cat([att, torch.zeros([batch, 1]), torch.zeros([batch, 1]), torch.ones([batch,  1])],
+        #                     dim=-1)
         return att

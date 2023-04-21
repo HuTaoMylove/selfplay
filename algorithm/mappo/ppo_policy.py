@@ -28,15 +28,8 @@ class PPOPolicy:
         Returns:
             values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
         """
-        if self.args.selfplay_algorithm == 'hsp':
-            if self.mode < 1:
-                cent_obs[:, 16:] = 0
-                obs[:, 18:] = 0
-            elif self.mode < 4:
-                cent_obs[:, 20:] = 0
-                obs[:, 22:] = 0
-        actions, action_log_probs, rnn_states_actor = self.actor(obs, rnn_states_actor, masks)
-        values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
+        actions, action_log_probs, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, self.mode)
+        values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks, self.mode)
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
 
     def get_values(self, cent_obs, rnn_states_critic, masks):
@@ -44,12 +37,7 @@ class PPOPolicy:
         Returns:
             values
         """
-        if self.args.selfplay_algorithm == 'hsp':
-            if self.mode < 1:
-                cent_obs[:, 16:] = 0
-            elif self.mode < 4:
-                cent_obs[:, 20:] = 0
-        values, _ = self.critic(cent_obs, rnn_states_critic, masks)
+        values, _ = self.critic(cent_obs, rnn_states_critic, masks, self.mode)
         return values
 
     def evaluate_actions(self, cent_obs, obs, rnn_states_actor, rnn_states_critic, action, masks, return_rnn=False):
@@ -57,22 +45,17 @@ class PPOPolicy:
         Returns:
             values, action_log_probs, dist_entropy
         """
-        if self.args.selfplay_algorithm == 'hsp':
-            if self.mode < 1:
-                cent_obs[:, 16:] = 0
-                obs[:, 18:] = 0
-            elif self.mode < 4:
-                cent_obs[:, 20:] = 0
-                obs[:, 22:] = 0
 
         if return_rnn == False:
-            action_log_probs, dist_entropy = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks)
-            values, _ = self.critic(cent_obs, rnn_states_critic, masks)
+            action_log_probs, dist_entropy = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks,
+                                                                         self.mode)
+            values, _ = self.critic(cent_obs, rnn_states_critic, masks, self.mode)
             return values, action_log_probs, dist_entropy
         else:
             action_log_probs, dist_entropy, n_rnn_states_actor = self.actor.evaluate_actions(obs, rnn_states_actor,
-                                                                                             action, masks, True)
-            values, n_rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
+                                                                                             action, masks, self.mode,
+                                                                                             True)
+            values, n_rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks, self.mode)
             return values, action_log_probs, dist_entropy, n_rnn_states_actor, n_rnn_states_critic
 
     def act(self, obs, rnn_states_actor, masks, deterministic=False):
@@ -80,13 +63,7 @@ class PPOPolicy:
         Returns:
             actions, rnn_states_actor
         """
-        if self.args.selfplay_algorithm == 'hsp':
-            if self.mode < 1:
-                obs[:, 18:] = 0
-            elif self.mode < 4:
-                obs[:, 22:] = 0
-
-        actions, _, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, deterministic)
+        actions, _, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, self.mode, deterministic)
         return actions, rnn_states_actor
 
     def prep_training(self):

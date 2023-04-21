@@ -76,6 +76,8 @@ class ShareRunner:
         self.eval_episodes = self.all_args.eval_episodes
         self.latest_mode = 0
 
+        # chose
+        self.prob = np.array([3.0, 2.0, 1.0])
         # dir
         self.log_dir = config["log_dir"]
         self.run_dir = config["run_dir"]
@@ -84,6 +86,18 @@ class ShareRunner:
             os.makedirs(self.save_dir)
         self.writer = SummaryWriter(self.log_dir)
         self.load()
+
+    def get_prob(self, epo):
+        if epo < 100:
+            return self.prob / self.prob.sum()
+        elif epo < 2000:
+            prob = np.zeros_like(self.prob)
+            prob[0] = max(0, self.prob[0] - self.prob[0] * (epo - 100) / 900)
+            prob[1] = max(0, self.prob[1] - self.prob[1] * (epo - 100) / 1900)
+            prob[2] = self.prob[2] + 2 * (epo - 100) / 1900
+            return prob / prob.sum()
+        else:
+            return np.array([0, 0, 1.0])
 
     def load(self):
         self.obs_space = self.envs.observation_space
@@ -124,7 +138,7 @@ class ShareRunner:
         logging.info("\n Load selfplay opponents: Algo {}, num_opponents {}.\n"
                      .format(self.all_args.selfplay_algorithm, self.all_args.n_choose_opponents))
 
-    def restore(self):
+    def restore(self, epo):
         policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
         self.policy.actor.load_state_dict(policy_actor_state_dict)
         policy_critic_state_dict = torch.load(str(self.save_dir) + '/critic_latest.pt')
@@ -136,7 +150,7 @@ class ShareRunner:
             for i in self.policy_pool.keys():
                 keylist.append(int(i))
             keylist.sort()
-            self.latest_mode = np.random.choice(a=[0, 1, 5], p=np.array([0.0, 0.4, 0.6]))
+            self.latest_mode = int(np.random.choice(a=[0, 1, 2], p=self.get_prob(epo)))
         self.policy.mode = int(self.latest_mode)
         self.reset_opponent()
 
@@ -156,9 +170,9 @@ class ShareRunner:
             from tensorboard.backend.event_processing import event_accumulator
             ea = event_accumulator.EventAccumulator(str(self.log_dir))
             ea.Reload()
-            already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards'))
+            already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards')) - 1
             logging.info(f'already trained {already_trained_episodes} episodes')
-            self.restore()
+            self.restore(already_trained_episodes)
 
         for episode in range(already_trained_episodes + 1, episodes):
             start = time.time()
@@ -185,11 +199,11 @@ class ShareRunner:
                 end = time.time()
                 logging.info(
                     "\n updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                    .format(episode,
-                            episodes,
-                            self.total_num_steps,
-                            self.num_env_steps,
-                            int(self.buffer_size * self.n_rollout_threads / (end - start))))
+                        .format(episode,
+                                episodes,
+                                self.total_num_steps,
+                                self.num_env_steps,
+                                int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
                 train_infos["average_episode_rewards"] = self.buffer.rewards[:, :, :2, :].sum() / (
                         (self.buffer.masks == False).sum() + 1)
@@ -210,7 +224,7 @@ class ShareRunner:
             if episode % self.test_interval == 0 and episode != 0:
                 self.test(self.total_num_steps)
 
-            self.policy.mode = np.random.choice(a=[0, 1, 5], p=np.array([0.0, 0.4, 0.6]))
+            self.policy.mode = np.random.choice(a=[0, 1, 2], p=self.get_prob(episode))
             self.latest_mode = self.policy.mode
             # save model
 
@@ -330,7 +344,7 @@ class ShareRunner:
         torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
         # [Selfplay] save policy & performance
         torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
-        self.policy_pool[str(episode)] =int(self.latest_mode)
+        self.policy_pool[str(episode)] = int(self.latest_mode)
 
     def reset_opponent(self):
         for i, p in enumerate(self.opponent_policy):

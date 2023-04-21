@@ -42,7 +42,7 @@ class PPOActor(nn.Module):
         self.act = ACTLayer(act_space, input_size, self.act_hidden_size, self.activation_id, self.gain)
         self.to(device)
 
-    def forward(self, obs, rnn_states, masks, deterministic=False):
+    def forward(self, obs, rnn_states, masks, att_mode=0, deterministic=False):
         obs = check(obs).to(**self.tpdv)
         rnn_states = check(rnn_states).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
@@ -53,15 +53,14 @@ class PPOActor(nn.Module):
             pos = self.pos(obs[:, 12:22].reshape(-1, 5, 2))
             dir = self.dir(obs[:, 22:].reshape(-1, 5, 2))
             full = torch.cat([id, mode, pos, dir], dim=1)
-            actor_features = self.attention(full)
-            actor_features = torch.mean(actor_features, dim=1)
+            actor_features = self.attention(full, att_mode)
         else:
             actor_features = self.base(obs)
         actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
         actions, action_log_probs = self.act(actor_features, deterministic)
         return actions, action_log_probs, rnn_states
 
-    def evaluate_actions(self, obs, rnn_states, action, masks, return_rnn=False):
+    def evaluate_actions(self, obs, rnn_states, action, masks, att_mode=0, return_rnn=False):
         obs = check(obs).to(**self.tpdv)
         rnn_states = check(rnn_states).to(**self.tpdv)
         action = check(action).to(**self.tpdv)
@@ -73,8 +72,7 @@ class PPOActor(nn.Module):
             pos = self.pos(obs[:, 12:22].reshape(-1, 5, 2))
             dir = self.dir(obs[:, 22:].reshape(-1, 5, 2))
             full = torch.cat([id, mode, pos, dir], dim=1)
-            actor_features = self.attention(full)
-            actor_features = torch.mean(actor_features, dim=1)
+            actor_features = self.attention(full, att_mode)
         else:
             actor_features = self.base(obs)
 
