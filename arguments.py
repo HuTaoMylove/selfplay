@@ -8,7 +8,7 @@ def get_args():
     env para
     """
     parse.add_argument('--env-name', type=str, default='5_vs_5')
-    parse.add_argument('--num-env-steps', type=int, default=1e8, help='the steps to collect samples')
+    parse.add_argument('--num-env-steps', type=int, default=4e7, help='the steps to collect samples')
     parse.add_argument('--cuda', action='store_true', default=False, help='use cuda do the training')
     parse.add_argument('--num-agent', type=int, default=4)
     parse.add_argument('--left-agent', type=int, default=2)

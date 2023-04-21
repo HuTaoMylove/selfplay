@@ -4,7 +4,7 @@ from .ppo_critic import PPOCritic
 
 
 class PPOPolicy:
-    def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu"), mode=0):
+    def __init__(self, args, obs_space, cent_obs_space, act_space, device=torch.device("cpu"), mode=2):
         self.args = args
         self.device = device
         # optimizer config
