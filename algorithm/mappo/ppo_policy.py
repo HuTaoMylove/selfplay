@@ -33,8 +33,8 @@ class PPOPolicy:
                 cent_obs[:, 16:] = 0
                 obs[:, 18:] = 0
             elif self.mode < 4:
-                cent_obs[:, 22:] = 0
-                obs[:, 24:] = 0
+                cent_obs[:, 20:] = 0
+                obs[:, 22:] = 0
         actions, action_log_probs, rnn_states_actor = self.actor(obs, rnn_states_actor, masks)
         values, rnn_states_critic = self.critic(cent_obs, rnn_states_critic, masks)
         return values, actions, action_log_probs, rnn_states_actor, rnn_states_critic
@@ -48,7 +48,7 @@ class PPOPolicy:
             if self.mode < 1:
                 cent_obs[:, 16:] = 0
             elif self.mode < 4:
-                cent_obs[:, 22:] = 0
+                cent_obs[:, 20:] = 0
         values, _ = self.critic(cent_obs, rnn_states_critic, masks)
         return values
 
@@ -62,8 +62,8 @@ class PPOPolicy:
                 cent_obs[:, 16:] = 0
                 obs[:, 18:] = 0
             elif self.mode < 4:
-                cent_obs[:, 22:] = 0
-                obs[:, 24:] = 0
+                cent_obs[:, 20:] = 0
+                obs[:, 22:] = 0
 
         if return_rnn == False:
             action_log_probs, dist_entropy = self.actor.evaluate_actions(obs, rnn_states_actor, action, masks)
@@ -84,7 +84,7 @@ class PPOPolicy:
             if self.mode < 1:
                 obs[:, 18:] = 0
             elif self.mode < 4:
-                obs[:, 24:] = 0
+                obs[:, 22:] = 0
 
         actions, _, rnn_states_actor = self.actor(obs, rnn_states_actor, masks, deterministic)
         return actions, rnn_states_actor

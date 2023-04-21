@@ -35,10 +35,10 @@ class Agent:
         self.rnn_state = np.zeros([self.n_threads, 2, 1, self.recurrent_hidden_size])
         self.mask = np.ones([self.n_threads, 2, 1])
 
-    def reload(self, idx):
+    def reload(self, idx, mode):
         self.net.actor.load_state_dict(torch.load(
             r'results/5_vs_5/' + self.algo + '/' + f'/actor_{idx}.pt'))
-        self.net.mode = int(idx) * self.args.buffer_size * self.args.n_rollout // 1e7
+        self.net.mode = mode
 
     def act(self, opponent_obs):
         opponent_action, opponent_rnn_states \
@@ -74,7 +74,7 @@ class ShareRunner:
         self.use_eval = self.all_args.use_eval
         self.eval_interval = self.all_args.eval_interval
         self.eval_episodes = self.all_args.eval_episodes
-        self.latest_elo = self.all_args.init_elo
+        self.latest_mode = 0
 
         # dir
         self.log_dir = config["log_dir"]
@@ -107,7 +107,7 @@ class ShareRunner:
             "Number of different opponents({}) must less than or equal to number of training threads({})!" \
                 .format(self.all_args.n_choose_opponents, self.n_rollout_threads)
 
-        self.policy_pool = {'0': self.all_args.init_elo}  # type: dict[str, float]
+        self.policy_pool = {'0': 0}  # type: dict[str, float]
         self.opponent_policy = [
             Agent(i) for i in [self.all_args] * 5]
 
@@ -124,12 +124,11 @@ class ShareRunner:
         logging.info("\n Load selfplay opponents: Algo {}, num_opponents {}.\n"
                      .format(self.all_args.selfplay_algorithm, self.all_args.n_choose_opponents))
 
-    def restore(self, epo):
+    def restore(self):
         policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
         self.policy.actor.load_state_dict(policy_actor_state_dict)
         policy_critic_state_dict = torch.load(str(self.save_dir) + '/critic_latest.pt')
         self.policy.critic.load_state_dict(policy_critic_state_dict)
-        self.policy.mode = epo * self.n_rollout_threads * self.buffer_size // 1e7
         if os.path.exists(str(self.save_dir) + '/elo.txt'):
             with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
                 self.policy_pool = json.load(file)
@@ -137,7 +136,8 @@ class ShareRunner:
             for i in self.policy_pool.keys():
                 keylist.append(int(i))
             keylist.sort()
-            self.latest_elo = self.policy_pool[str(keylist[-1])]
+            self.latest_mode = np.random.choice(a=[0, 1, 5], p=np.array([0.0, 0.4, 0.6]))
+        self.policy.mode = int(self.latest_mode)
         self.reset_opponent()
 
     def train(self):
@@ -158,7 +158,7 @@ class ShareRunner:
             ea.Reload()
             already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards'))
             logging.info(f'already trained {already_trained_episodes} episodes')
-            self.restore(already_trained_episodes + 1)
+            self.restore()
 
         for episode in range(already_trained_episodes + 1, episodes):
             start = time.time()
@@ -185,11 +185,11 @@ class ShareRunner:
                 end = time.time()
                 logging.info(
                     "\n updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                        .format(episode,
-                                episodes,
-                                self.total_num_steps,
-                                self.num_env_steps,
-                                int(self.buffer_size * self.n_rollout_threads / (end - start))))
+                    .format(episode,
+                            episodes,
+                            self.total_num_steps,
+                            self.num_env_steps,
+                            int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
                 train_infos["average_episode_rewards"] = self.buffer.rewards[:, :, :2, :].sum() / (
                         (self.buffer.masks == False).sum() + 1)
@@ -210,7 +210,8 @@ class ShareRunner:
             if episode % self.test_interval == 0 and episode != 0:
                 self.test(self.total_num_steps)
 
-            self.policy.mode = self.total_num_steps // 1e7
+            self.policy.mode = np.random.choice(a=[0, 1, 5], p=np.array([0.0, 0.4, 0.6]))
+            self.latest_mode = self.policy.mode
             # save model
 
     def warmup(self):
@@ -292,7 +293,7 @@ class ShareRunner:
     @torch.no_grad()
     def test(self, total_num_steps):
         logging.info("\nStart test...")
-
+        self.policy.mode = 5
         # self.policy.prep_rollout()
         obs, _ = self.test_envs.reset()
         masks = np.ones((self.n_test_rollout_threads, *self.buffer.masks.shape[2:]), dtype=np.float32)
@@ -329,14 +330,15 @@ class ShareRunner:
         torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
         # [Selfplay] save policy & performance
         torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
-        self.policy_pool[str(episode)] = self.latest_elo
+        self.policy_pool[str(episode)] =int(self.latest_mode)
 
     def reset_opponent(self):
         for i, p in enumerate(self.opponent_policy):
             if i < 3:
-                p.reload(list(self.policy_pool.keys())[-1])
+                idx = list(self.policy_pool.keys())[-1]
             else:
-                p.reload(np.random.choice(list(self.policy_pool.keys())))
+                idx = np.random.choice(list(self.policy_pool.keys()))
+            p.reload(idx, self.policy_pool[idx])
             p.reset(self.n_rollout_threads / self.max_policy_size)
 
         self.buffer.clear()
