@@ -78,7 +78,10 @@ class ShareRunner:
 
         # chose
         # self.prob = np.array([3.0, 3.0, 3.0])
-        self.prob = 0.6
+        if self.all_args.selfplay_algorithm=='hsp':
+            self.prob = 1
+        else:
+            self.prob = 1
         # dir
         self.log_dir = config["log_dir"]
         self.run_dir = config["run_dir"]
@@ -99,7 +102,7 @@ class ShareRunner:
         #     return prob / prob.sum()
         # else:
         #     return np.array([0, 0, 1.0])
-        return self.prob + 0.4 * epo / 4000
+        return min(1,self.prob + 0.1 * epo / 1000)
 
     def load(self):
         self.obs_space = self.envs.observation_space
