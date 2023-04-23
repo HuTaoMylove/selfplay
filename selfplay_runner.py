@@ -78,7 +78,7 @@ class ShareRunner:
 
         # chose
         # self.prob = np.array([3.0, 3.0, 3.0])
-        if self.all_args.selfplay_algorithm=='hsp':
+        if self.all_args.selfplay_algorithm == 'hsp':
             self.prob = 1
         else:
             self.prob = 1
@@ -102,7 +102,7 @@ class ShareRunner:
         #     return prob / prob.sum()
         # else:
         #     return np.array([0, 0, 1.0])
-        return min(1,self.prob + 0.1 * epo / 1000)
+        return min(1, self.prob + 0.2 * epo / 1000)
 
     def load(self):
         self.obs_space = self.envs.observation_space
@@ -189,7 +189,7 @@ class ShareRunner:
                 obs, share_obs, rewards, dones, infos = self.envs.step(actions)
                 data = obs, share_obs, actions, rewards, dones, action_log_probs, values, rnn_states_actor, rnn_states_critic
                 # insert data into buffer
-                self.insert(data,episode)
+                self.insert(data, episode)
 
             # compute return and update network
             self.compute()
@@ -237,12 +237,12 @@ class ShareRunner:
     def mask(self, epo, obs, share_obs=None):
         prob = self.get_prob(epo)
         from torch.distributions.categorical import Categorical
-        dist = Categorical(torch.tensor([1 - prob, prob] * self.n_rollout_threads * 2 * 20).reshape(-1, 2))
-        sample = dist.sample().reshape(self.n_rollout_threads, 2, 20).numpy()
-        obs[:, :, -20:] = obs[:, :, -20:] * sample
+        dist = Categorical(torch.tensor([1 - prob, prob] * self.n_rollout_threads * 2 * 14).reshape(-1, 2))
+        sample = dist.sample().reshape(self.n_rollout_threads, 2, 14).numpy()
+        obs[:, :, -14:] = obs[:, :, -14:] * sample
         if share_obs is None:
             return obs
-        share_obs[:, :, -20:] = share_obs[:, :, -20:] * sample
+        share_obs[:, :, -14:] = share_obs[:, :, -14:] * sample
         return obs, share_obs
 
     def warmup(self, epo=0):
@@ -295,7 +295,7 @@ class ShareRunner:
 
         self.buffer.compute_returns(next_values)
 
-    def insert(self, data: List[np.ndarray],eposide):
+    def insert(self, data: List[np.ndarray], eposide):
         obs, share_obs, actions, rewards, dones, action_log_probs, values, rnn_states_actor, rnn_states_critic = data
         rewards = np.expand_dims(rewards, axis=-1)
         dones = np.ones([self.n_rollout_threads, self.num_agents]) * dones.reshape(-1, 1)
@@ -366,7 +366,7 @@ class ShareRunner:
         torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
         self.policy_pool[str(episode)] = int(self.latest_mode)
 
-    def reset_opponent(self,epo):
+    def reset_opponent(self, epo):
         for i, p in enumerate(self.opponent_policy):
             if i < 3:
                 idx = list(self.policy_pool.keys())[-1]
