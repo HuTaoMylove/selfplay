@@ -46,6 +46,9 @@ if __name__ == '__main__':
         device = torch.device("cpu")
         torch.set_num_threads(all_args.n_training)
 
+    import setproctitle
+    setproctitle.setproctitle(str(all_args.selfplay_algorithm)
+                              +"@" + str('yemingzhi'))
     config = {
         "all_args": all_args,
         "envs": envs,

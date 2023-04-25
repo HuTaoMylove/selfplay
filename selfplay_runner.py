@@ -20,6 +20,18 @@ def _t2n(x):
     return x.detach().cpu().numpy()
 
 
+class rAgent:
+    def act(self, opponent_obs):
+        action = torch.randint(0, 19, [opponent_obs.shape[0]*opponent_obs.shape[1],1])
+        return action
+
+    def reset(self, n_threads=0):
+        return
+
+    def reload(self, idx=0, mode=2):
+        return
+
+
 class Agent:
     def __init__(self, args, model_path=None):
         self.net = Policy(args, gym.spaces.Box(np.zeros(32), np.zeros(32)), gym.spaces.Box(np.zeros(30), np.zeros(30)),
@@ -89,26 +101,29 @@ class ShareRunner:
         self.share_obs_space = self.envs.share_observation_space
         self.act_space = self.envs.action_space
         self.num_agents = self.envs.num_agents
-        # policy & algorithm
+        self.selfplay_algo = self.all_args.selfplay_algorithm
         self.max_policy_size = self.all_args.n_choose_opponents
         self.policy = Policy(self.all_args, self.obs_space, self.share_obs_space,
                              self.act_space,
                              device=self.device)
+        self.policy.mode = 0 if self.selfplay_algo == 'hsp' else 2
 
         self.trainer = Trainer(self.all_args, device=self.device)
         self.buffer = SharedReplayBuffer(self.all_args, self.num_agents // 2, self.obs_space,
                                          self.share_obs_space,
                                          self.act_space)
         # [Selfplay] allocate memory for opponent policy/data in training
-        self.selfplay_algo = self.all_args.selfplay_algorithm
 
         assert self.all_args.n_choose_opponents <= self.n_rollout_threads, \
             "Number of different opponents({}) must less than or equal to number of training threads({})!" \
                 .format(self.all_args.n_choose_opponents, self.n_rollout_threads)
-
-        self.policy_pool = {'0': 0}  # type: dict[str, float]
-        self.opponent_policy = [
-            Agent(i) for i in [self.all_args] * 5]
+        self.policy_pool = {'0': 0 if self.selfplay_algo == 'hsp' else 2}  # type: dict[str, float]
+        if self.selfplay_algo == 'rsp':
+            self.opponent_policy = [
+                rAgent() for _ in range(5)]
+        else:
+            self.opponent_policy = [
+                Agent(i) for i in [self.all_args] * 5]
 
         for i in self.opponent_policy:
             i.reset(self.n_rollout_threads / self.max_policy_size)
@@ -116,12 +131,12 @@ class ShareRunner:
         self.opponent_env_split = np.array_split(np.arange(self.n_rollout_threads), len(self.opponent_policy))
         self.opponent_obs = np.zeros_like(self.buffer.obs[0])
 
-        if self.all_args.use_eval:
-            self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
-                                               device=self.device)
+        # if self.all_args.use_eval:
+        #     self.eval_opponent_policy = Policy(self.all_args, self.obs_space, self.share_obs_space, self.act_space,
+        #                                        device=self.device)
 
         logging.info("\n Load selfplay opponents: Algo {}, num_opponents {}.\n"
-                     .format(self.all_args.selfplay_algorithm, self.all_args.n_choose_opponents))
+                     .format(self.selfplay_algo, self.all_args.n_choose_opponents))
 
     def restore(self, epo):
         policy_actor_state_dict = torch.load(str(self.save_dir) + '/actor_latest.pt')
@@ -132,12 +147,19 @@ class ShareRunner:
             with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
                 self.policy_pool = json.load(file)
 
-        if epo < 600:
-            self.policy.mode = 0
-        elif epo < 1400:
-            self.policy.mode = 1
+        if self.selfplay_algo == 'hsp':
+            if epo < 600:
+                self.policy.mode = 0
+            elif epo < 1400:
+                self.policy.mode = 1
+            else:
+                self.policy.mode = 2
         else:
             self.policy.mode = 2
+
+        if self.selfplay_algo == 'rsp' and epo >= 600:
+            self.opponent_policy = [
+                Agent(i) for i in [self.all_args] * 5]
 
         if 1400 > epo >= 600:
             self.policy.reset_lr(3e-4)
@@ -193,16 +215,20 @@ class ShareRunner:
                 end = time.time()
                 logging.info(
                     "\n updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                    .format(episode,
-                            episodes,
-                            self.total_num_steps,
-                            self.num_env_steps,
-                            int(self.buffer_size * self.n_rollout_threads / (end - start))))
+                        .format(episode,
+                                episodes,
+                                self.total_num_steps,
+                                self.num_env_steps,
+                                int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
                 train_infos["average_episode_rewards"] = self.buffer.rewards[:, :, :2, :].sum() / (
                         (self.buffer.masks == False).sum() + 1)
                 logging.info("average episode rewards is {}".format(train_infos["average_episode_rewards"]))
                 self.log_info(train_infos, self.total_num_steps)
+
+            if self.selfplay_algo == 'rsp' and episode == 600:
+                self.opponent_policy = [
+                    Agent(i) for i in [self.all_args] * 5]
 
             if (episode % self.save_interval == 0) or (episode == episodes - 1):
                 self.save(episode)
@@ -218,10 +244,13 @@ class ShareRunner:
             if episode % self.test_interval == 0 and episode != 0:
                 self.test(self.total_num_steps)
 
-            if episode < 600:
-                self.policy.mode = 0
-            elif episode < 1400:
-                self.policy.mode = 1
+            if self.selfplay_algo == 'hsp':
+                if episode < 600:
+                    self.policy.mode = 0
+                elif episode < 1400:
+                    self.policy.mode = 1
+                else:
+                    self.policy.mode = 2
             else:
                 self.policy.mode = 2
 
@@ -354,18 +383,34 @@ class ShareRunner:
         self.policy_pool[str(episode)] = int(self.policy.mode)
 
     def reset_opponent(self, epo):
-        for i, p in enumerate(self.opponent_policy):
-            if i < 3:
+        if self.selfplay_algo == 'hsp' or self.selfplay_algo == 'fsp':
+            for i, p in enumerate(self.opponent_policy):
+                if i < 3:
+                    idx = list(self.policy_pool.keys())[-1]
+                else:
+                    idx = np.random.choice(list(self.policy_pool.keys()))
+                p.reload(idx, self.policy_pool[idx])
+                p.reset(self.n_rollout_threads / self.max_policy_size)
+        elif self.selfplay_algo == 'sp':
+            for i, p in enumerate(self.opponent_policy):
                 idx = list(self.policy_pool.keys())[-1]
+                p.reload(idx, self.policy_pool[idx])
+                p.reset(self.n_rollout_threads / self.max_policy_size)
+        else:
+            if epo < 600:
+                for i, p in enumerate(self.opponent_policy):
+                    p.reset()
             else:
-                idx = np.random.choice(list(self.policy_pool.keys()))
-            # p.reload(idx, self.policy_pool[idx])
-            p.reload(idx, self.policy_pool[idx])
-            p.reset(self.n_rollout_threads / self.max_policy_size)
+                for i, p in enumerate(self.opponent_policy):
+                    if i < 3:
+                        idx = list(self.policy_pool.keys())[-1]
+                    else:
+                        idx = np.random.choice(list(self.policy_pool.keys()))
+                    p.reload(idx, self.policy_pool[idx])
+                    p.reset(self.n_rollout_threads / self.max_policy_size)
+
         self.buffer.clear()
         self.opponent_obs = np.zeros_like(self.opponent_obs)
-
-        # reset env
         obs, share_obs = self.envs.reset()
         if self.all_args.n_choose_opponents > 0:
             self.opponent_obs = obs[:, self.num_agents // 2:, ...]

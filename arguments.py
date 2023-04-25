@@ -33,7 +33,7 @@ def get_args():
     selfplay para
     """
     parse.add_argument('--n-rollout', type=int, default=10, help='the number of para env')
-    parse.add_argument("--selfplay-algorithm", type=str, default='hsp', choices=["hsp", "fsp", "pfsp"],
+    parse.add_argument("--selfplay-algorithm", type=str, default='rsp', choices=["hsp", "fsp", "sp", 'rsp'],
                        help="Specifiy the selfplay algorithm (default 'sp')")
     parse.add_argument('--n-choose-opponents', type=int, default=5,
                        help="number of different opponents chosen for rollout. (default 1)")
