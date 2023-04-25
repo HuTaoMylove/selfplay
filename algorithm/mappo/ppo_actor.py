@@ -44,7 +44,7 @@ class PPOActor(nn.Module):
         self.act = ACTLayer(act_space, input_size, self.act_hidden_size, self.activation_id, self.gain)
         self.to(device)
 
-    def forward(self, obs, rnn_states, masks, att_mode=2, deterministic=False):
+    def forward(self, obs, rnn_states, masks, att_mode=0, deterministic=False):
         obs = check(obs).to(**self.tpdv)
         rnn_states = check(rnn_states).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)
@@ -67,7 +67,7 @@ class PPOActor(nn.Module):
         actions, action_log_probs = self.act(actor_features, deterministic)
         return actions, action_log_probs, rnn_states
 
-    def evaluate_actions(self, obs, rnn_states, action, masks, att_mode=2, return_rnn=False):
+    def evaluate_actions(self, obs, rnn_states, action, masks, att_mode=0, return_rnn=False):
         obs = check(obs).to(**self.tpdv)
         rnn_states = check(rnn_states).to(**self.tpdv)
         action = check(action).to(**self.tpdv)

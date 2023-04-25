@@ -35,7 +35,7 @@ class Agent:
         self.rnn_state = np.zeros([self.n_threads, 2, 1, self.recurrent_hidden_size])
         self.mask = np.ones([self.n_threads, 2, 1])
 
-    def reload(self, idx, mode=2):
+    def reload(self, idx, mode=0):
         self.net.actor.load_state_dict(torch.load(
             r'results/5_vs_5/' + self.algo + '/' + f'/actor_{idx}.pt'))
         self.net.mode = mode
@@ -74,14 +74,7 @@ class ShareRunner:
         self.use_eval = self.all_args.use_eval
         self.eval_interval = self.all_args.eval_interval
         self.eval_episodes = self.all_args.eval_episodes
-        self.latest_mode = 2
 
-        # chose
-        # self.prob = np.array([3.0, 3.0, 3.0])
-        if self.all_args.selfplay_algorithm == 'hsp':
-            self.prob = 1
-        else:
-            self.prob = 1
         # dir
         self.log_dir = config["log_dir"]
         self.run_dir = config["run_dir"]
@@ -90,19 +83,6 @@ class ShareRunner:
             os.makedirs(self.save_dir)
         self.writer = SummaryWriter(self.log_dir)
         self.load()
-
-    def get_prob(self, epo):
-        # if epo < 1000:
-        #     return self.prob / self.prob.sum()
-        # elif epo < 2000:
-        #     prob = np.zeros_like(self.prob)
-        #     prob[0] = max(0, 3 - 3 * (epo - 1000) / 1000)
-        #     prob[1] = max(0, 3 - 3 * (epo - 1000) / 2000)
-        #     prob[2] = 3 + 3 * (epo - 1000) / 2000
-        #     return prob / prob.sum()
-        # else:
-        #     return np.array([0, 0, 1.0])
-        return min(1, self.prob + 0.2 * epo / 1000)
 
     def load(self):
         self.obs_space = self.envs.observation_space
@@ -151,12 +131,21 @@ class ShareRunner:
         if os.path.exists(str(self.save_dir) + '/elo.txt'):
             with open(str(self.save_dir) + '/elo.txt', encoding="utf-8") as file:
                 self.policy_pool = json.load(file)
-            # keylist = []
-            # for i in self.policy_pool.keys():
-            #     keylist.append(int(i))
-            # keylist.sort()
-            # self.latest_mode = int(np.random.choice(a=[0, 1, 2], p=self.get_prob(epo)))
-        # self.policy.mode = int(self.latest_mode)
+
+        if epo < 600:
+            self.policy.mode = 0
+        elif epo < 1400:
+            self.policy.mode = 1
+        else:
+            self.policy.mode = 2
+
+        if 1400 > epo >= 600:
+            self.policy.reset_lr(3e-4)
+            self.trainer.reset_entropy_coef(0.03)
+        if epo >= 1400:
+            self.policy.reset_lr(1e-4)
+            self.trainer.reset_entropy_coef(0.01)
+
         self.reset_opponent(epo)
 
     def train(self):
@@ -176,9 +165,9 @@ class ShareRunner:
             ea.Reload()
             already_trained_episodes = len(ea.scalars.Items('train/average_episode_rewards')) - 1
             logging.info(f'already trained {already_trained_episodes} episodes')
-            self.restore(already_trained_episodes)
+            self.restore(already_trained_episodes + 1)
 
-        self.warmup(already_trained_episodes + 1)
+        self.warmup()
         for episode in range(already_trained_episodes + 1, episodes):
             start = time.time()
             for step in range(self.buffer_size):
@@ -204,11 +193,11 @@ class ShareRunner:
                 end = time.time()
                 logging.info(
                     "\n updates {}/{} episodes, total num timesteps {}/{}, FPS {}.\n"
-                        .format(episode,
-                                episodes,
-                                self.total_num_steps,
-                                self.num_env_steps,
-                                int(self.buffer_size * self.n_rollout_threads / (end - start))))
+                    .format(episode,
+                            episodes,
+                            self.total_num_steps,
+                            self.num_env_steps,
+                            int(self.buffer_size * self.n_rollout_threads / (end - start))))
 
                 train_infos["average_episode_rewards"] = self.buffer.rewards[:, :, :2, :].sum() / (
                         (self.buffer.masks == False).sum() + 1)
@@ -229,30 +218,29 @@ class ShareRunner:
             if episode % self.test_interval == 0 and episode != 0:
                 self.test(self.total_num_steps)
 
-            # self.policy.mode = np.random.choice(a=[0, 1, 2], p=self.get_prob(episode))
-            self.policy.mode = 2
-            self.latest_mode = self.policy.mode
+            if episode < 600:
+                self.policy.mode = 0
+            elif episode < 1400:
+                self.policy.mode = 1
+            else:
+                self.policy.mode = 2
+
+            if episode == 600:
+                self.policy.reset_lr(3e-4)
+                self.trainer.reset_entropy_coef(0.03)
+            if episode == 1400:
+                self.policy.reset_lr(1e-4)
+                self.trainer.reset_entropy_coef(0.01)
+
             # save model
 
-    def mask(self, epo, obs, share_obs=None):
-        prob = self.get_prob(epo)
-        from torch.distributions.categorical import Categorical
-        dist = Categorical(torch.tensor([1 - prob, prob] * self.n_rollout_threads * 2 * 14).reshape(-1, 2))
-        sample = dist.sample().reshape(self.n_rollout_threads, 2, 14).numpy()
-        obs[:, :, -14:] = obs[:, :, -14:] * sample
-        if share_obs is None:
-            return obs
-        share_obs[:, :, -14:] = share_obs[:, :, -14:] * sample
-        return obs, share_obs
-
-    def warmup(self, epo=0):
+    def warmup(self):
         # reset env
         obs, share_obs = self.envs.reset()
         self.opponent_obs = obs[:, self.num_agents // 2:, ...]
         obs = obs[:, :self.num_agents // 2, ...]
         share_obs = share_obs[:, :self.num_agents // 2, ...]
 
-        obs, share_obs = self.mask(epo, obs, share_obs)
         self.buffer.step = 0
         self.buffer.obs[0] = obs.copy()
         self.buffer.share_obs[0] = share_obs.copy()
@@ -316,7 +304,6 @@ class ShareRunner:
 
         obs = obs[:, :self.num_agents // 2, ...]
         share_obs = share_obs[:, :self.num_agents // 2, ...]
-        obs, share_obs = self.mask(eposide, obs, share_obs)
         actions = actions[:, :self.num_agents // 2, ...]
         rewards = rewards[:, :self.num_agents // 2, ...]
         masks = masks[:, :self.num_agents // 2, ...]
@@ -364,7 +351,7 @@ class ShareRunner:
         torch.save(policy_critic_state_dict, str(self.save_dir) + '/critic_latest.pt')
         # [Selfplay] save policy & performance
         torch.save(policy_actor_state_dict, str(self.save_dir) + f'/actor_{episode}.pt')
-        self.policy_pool[str(episode)] = int(self.latest_mode)
+        self.policy_pool[str(episode)] = int(self.policy.mode)
 
     def reset_opponent(self, epo):
         for i, p in enumerate(self.opponent_policy):
@@ -373,7 +360,7 @@ class ShareRunner:
             else:
                 idx = np.random.choice(list(self.policy_pool.keys()))
             # p.reload(idx, self.policy_pool[idx])
-            p.reload(idx, 2)
+            p.reload(idx, self.policy_pool[idx])
             p.reset(self.n_rollout_threads / self.max_policy_size)
         self.buffer.clear()
         self.opponent_obs = np.zeros_like(self.opponent_obs)
@@ -384,7 +371,6 @@ class ShareRunner:
             self.opponent_obs = obs[:, self.num_agents // 2:, ...]
             obs = obs[:, :self.num_agents // 2, ...]
             share_obs = share_obs[:, :self.num_agents // 2, ...]
-            obs, share_obs = self.mask(epo, obs, share_obs)
         self.buffer.obs[0] = obs.copy()
         self.buffer.share_obs[0] = share_obs.copy()
 

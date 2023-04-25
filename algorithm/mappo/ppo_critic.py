@@ -50,7 +50,7 @@ class PPOCritic(nn.Module):
     def init_(self, m):
         return init(m, nn.init.orthogonal_, lambda x: nn.init.constant_(x, 0), 0.01)
 
-    def forward(self, obs, rnn_states, masks, att_mode=2):
+    def forward(self, obs, rnn_states, masks, att_mode=0):
         obs = check(obs).to(**self.tpdv)
         rnn_states = check(rnn_states).to(**self.tpdv)
         masks = check(masks).to(**self.tpdv)

@@ -66,8 +66,8 @@ def get_args():
                        help="By default false. If set, clip value loss.")
     parse.add_argument("--value-loss-coef", type=float, default=1,
                        help='ppo value loss coefficient (default: 1)')
-    parse.add_argument("--entropy-coef", type=float, default=0.01,
-                       help='entropy term coefficient (default: 0.01)')
+    parse.add_argument("--entropy-coef", type=float, default=0.1,
+                       help='entropy term coefficient (default: 0.03)')
     parse.add_argument("--use-max-grad-norm", action='store_false', default=True,
                        help="By default, use max norm of gradients. If set, do not use.")
     parse.add_argument("--max-grad-norm", type=float, default=2,

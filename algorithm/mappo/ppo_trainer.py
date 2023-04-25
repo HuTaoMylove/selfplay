@@ -25,6 +25,9 @@ class PPOTrainer:
         # rnn configs
         self.data_chunk_length = args.data_chunk_length
 
+    def reset_entropy_coef(self,lr):
+        self.entropy_coef=lr
+
     def ppo_update(self, policy: PPOPolicy, sample):
 
         obs_batch, share_obs_batch, actions_batch, masks_batch, old_action_log_probs_batch, advantages_batch, \
