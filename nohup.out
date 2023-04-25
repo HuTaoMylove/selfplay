@@ -16796,3 +16796,257 @@ average episode rewards is 0.8219511450790777
 average episode rewards is 0.36341462484220177
 
 Start test...
+
+End test...
+
+ updates 3949/4000 episodes, total num timesteps 39500000/40000000, FPS 475.
+
+average episode rewards is 0.21951219512195122
+
+ updates 3950/4000 episodes, total num timesteps 39510000/40000000, FPS 464.
+
+average episode rewards is 0.3902439024390244
+
+ updates 3951/4000 episodes, total num timesteps 39520000/40000000, FPS 487.
+
+average episode rewards is 0.3707317026650033
+
+ updates 3952/4000 episodes, total num timesteps 39530000/40000000, FPS 463.
+
+average episode rewards is 0.23902439489597227
+
+Start test...
+
+End test...
+
+ updates 3953/4000 episodes, total num timesteps 39540000/40000000, FPS 453.
+
+average episode rewards is 0.29512196052365186
+
+ updates 3954/4000 episodes, total num timesteps 39550000/40000000, FPS 481.
+
+average episode rewards is 0.2682926829268293
+
+ updates 3955/4000 episodes, total num timesteps 39560000/40000000, FPS 466.
+
+average episode rewards is 0.3487804691965987
+
+ updates 3956/4000 episodes, total num timesteps 39570000/40000000, FPS 476.
+
+average episode rewards is 0.29756097095768624
+
+Start test...
+
+End test...
+
+ updates 3957/4000 episodes, total num timesteps 39580000/40000000, FPS 457.
+
+average episode rewards is 0.4024390243902439
+
+ updates 3958/4000 episodes, total num timesteps 39590000/40000000, FPS 474.
+
+average episode rewards is 0.6390244088521818
+
+ updates 3959/4000 episodes, total num timesteps 39600000/40000000, FPS 458.
+
+average episode rewards is 0.11463414168939358
+
+ updates 3960/4000 episodes, total num timesteps 39610000/40000000, FPS 468.
+
+average episode rewards is 0.4634146341463415
+
+Start test...
+
+End test...
+
+ updates 3961/4000 episodes, total num timesteps 39620000/40000000, FPS 476.
+
+average episode rewards is 0.2512194935868426
+
+ updates 3962/4000 episodes, total num timesteps 39630000/40000000, FPS 460.
+
+average episode rewards is 0.26097560510402773
+
+ updates 3963/4000 episodes, total num timesteps 39640000/40000000, FPS 467.
+
+average episode rewards is 0.3073170824748714
+
+ updates 3964/4000 episodes, total num timesteps 39650000/40000000, FPS 496.
+
+average episode rewards is 0.20487803947634814
+
+Start test...
+
+End test...
+
+ updates 3965/4000 episodes, total num timesteps 39660000/40000000, FPS 469.
+
+average episode rewards is 0.4878048780487805
+
+ updates 3966/4000 episodes, total num timesteps 39670000/40000000, FPS 476.
+
+average episode rewards is 0.27073169336086367
+
+ updates 3967/4000 episodes, total num timesteps 39680000/40000000, FPS 478.
+
+average episode rewards is 0.9439024576326696
+
+ updates 3968/4000 episodes, total num timesteps 39690000/40000000, FPS 472.
+
+average episode rewards is 0.40731709177901104
+
+Start test...
+
+End test...
+
+ updates 3969/4000 episodes, total num timesteps 39700000/40000000, FPS 468.
+
+average episode rewards is 0.08536585365853659
+
+ updates 3970/4000 episodes, total num timesteps 39710000/40000000, FPS 465.
+
+average episode rewards is 0.02682926596664801
+
+ updates 3971/4000 episodes, total num timesteps 39720000/40000000, FPS 471.
+
+average episode rewards is 0.014634144015428497
+
+ updates 3972/4000 episodes, total num timesteps 39730000/40000000, FPS 485.
+
+average episode rewards is 0.5560975423673304
+
+Start test...
+
+End test...
+
+ updates 3973/4000 episodes, total num timesteps 39740000/40000000, FPS 470.
+
+average episode rewards is 0.49512193261123283
+
+ updates 3974/4000 episodes, total num timesteps 39750000/40000000, FPS 463.
+
+average episode rewards is 0.3219512148601253
+
+ updates 3975/4000 episodes, total num timesteps 39760000/40000000, FPS 485.
+
+average episode rewards is 0.14878049710901772
+
+ updates 3976/4000 episodes, total num timesteps 39770000/40000000, FPS 469.
+
+average episode rewards is 0.36097559114781824
+
+Start test...
+
+End test...
+
+ updates 3977/4000 episodes, total num timesteps 39780000/40000000, FPS 445.
+
+average episode rewards is 0.8317072798566121
+
+ updates 3978/4000 episodes, total num timesteps 39790000/40000000, FPS 466.
+
+average episode rewards is -0.12926829733499667
+
+ updates 3979/4000 episodes, total num timesteps 39800000/40000000, FPS 477.
+
+average episode rewards is 0.34146341463414637
+
+ updates 3980/4000 episodes, total num timesteps 39810000/40000000, FPS 475.
+
+average episode rewards is 0.4195121672095322
+
+Start test...
+
+End test...
+
+ updates 3981/4000 episodes, total num timesteps 39820000/40000000, FPS 457.
+
+average episode rewards is 0.417073180035847
+
+ updates 3982/4000 episodes, total num timesteps 39830000/40000000, FPS 479.
+
+average episode rewards is 0.3878048687446408
+
+ updates 3983/4000 episodes, total num timesteps 39840000/40000000, FPS 454.
+
+average episode rewards is 0.5975609756097561
+
+ updates 3984/4000 episodes, total num timesteps 39850000/40000000, FPS 451.
+
+average episode rewards is 0.8804877676614901
+
+Start test...
+
+End test...
+
+ updates 3985/4000 episodes, total num timesteps 39860000/40000000, FPS 460.
+
+average episode rewards is 0.1804878072040837
+
+ updates 3986/4000 episodes, total num timesteps 39870000/40000000, FPS 478.
+
+average episode rewards is 0.24390243902439024
+
+ updates 3987/4000 episodes, total num timesteps 39880000/40000000, FPS 470.
+
+average episode rewards is 0.24390243902439024
+
+ updates 3988/4000 episodes, total num timesteps 39890000/40000000, FPS 470.
+
+average episode rewards is 0.5609756097560976
+
+Start test...
+
+End test...
+
+ updates 3989/4000 episodes, total num timesteps 39900000/40000000, FPS 474.
+
+average episode rewards is 0.25853659466999335
+
+ updates 3990/4000 episodes, total num timesteps 39910000/40000000, FPS 478.
+
+average episode rewards is 0.40487805808462746
+
+ updates 3991/4000 episodes, total num timesteps 39920000/40000000, FPS 465.
+
+average episode rewards is 0.3902439024390244
+
+ updates 3992/4000 episodes, total num timesteps 39930000/40000000, FPS 471.
+
+average episode rewards is 0.4463414448063548
+
+Start test...
+
+End test...
+
+ updates 3993/4000 episodes, total num timesteps 39940000/40000000, FPS 449.
+
+average episode rewards is 0.6512195308034013
+
+ updates 3994/4000 episodes, total num timesteps 39950000/40000000, FPS 463.
+
+average episode rewards is 0.3902439024390244
+
+ updates 3995/4000 episodes, total num timesteps 39960000/40000000, FPS 463.
+
+average episode rewards is 0.07804878165082234
+
+ updates 3996/4000 episodes, total num timesteps 39970000/40000000, FPS 443.
+
+average episode rewards is 0.07560975958661335
+
+Start test...
+
+End test...
+
+ updates 3997/4000 episodes, total num timesteps 39980000/40000000, FPS 462.
+
+average episode rewards is 0.4878048780487805
+
+ updates 3998/4000 episodes, total num timesteps 39990000/40000000, FPS 480.
+
+average episode rewards is 0.45121951219512196
+
+ updates 3999/4000 episodes, total num timesteps 40000000/40000000, FPS 471.
+
+average episode rewards is 0.358536603974133
